@@ -2,6 +2,7 @@ package emux
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -57,14 +58,17 @@ func (s *Session) Close() error {
 	if !atomic.CompareAndSwapUint32(&s.isClose, 0, 1) {
 		return nil
 	}
-	readers.Put(s.decode.r.(*bufio.Reader))
-	writers.Put(s.encode.w.(*bufio.Writer))
 	s.mut.Lock()
-	defer s.mut.Unlock()
+	defer func() {
+		s.mut.Unlock()
+		readers.Put(s.decode.r.(*bufio.Reader))
+		writers.Put(s.encode.w.(*bufio.Writer))
+	}()
 	for _, v := range s.sess {
 		v.Close()
 	}
 	close(s.acceptChan)
+
 	return s.closer.Close()
 }
 
@@ -217,6 +221,7 @@ func (s *Session) handleLoop() {
 				continue
 			}
 			s.freeStream(sid)
+			close(stm.close)
 		case CmdDisconnected:
 			stm := s.getStream(sid)
 			if stm == nil {
@@ -226,6 +231,7 @@ func (s *Session) handleLoop() {
 				continue
 			}
 			s.freeStream(sid)
+			close(stm.close)
 		case CmdData:
 			stm := s.getStream(sid)
 			if stm == nil {
@@ -234,6 +240,8 @@ func (s *Session) handleLoop() {
 					if s.Logger != nil {
 						s.Logger.Println("emux: write to discard error", "cmd", cmd, "sid", sid, "err", err)
 					}
+				}
+				if errors.Is(err, ErrInvalidStream) {
 					return
 				}
 				continue
@@ -243,6 +251,9 @@ func (s *Session) handleLoop() {
 			if err != nil {
 				if s.Logger != nil {
 					s.Logger.Println("emux: write to stream error", "cmd", cmd, "sid", sid, "err", err)
+				}
+				if errors.Is(err, ErrInvalidStream) {
+					return
 				}
 				continue
 			}

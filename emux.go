@@ -38,6 +38,9 @@ func NewDialer(dialer Dialer) *DialerSession {
 }
 
 func (d *DialerSession) DialContext(ctx context.Context, network, address string) (net.Conn, error) {
+	return d.dialContext(ctx, network, address, 3)
+}
+func (d *DialerSession) dialContext(ctx context.Context, network, address string, retry int) (net.Conn, error) {
 	if d.sess == nil || d.sess.IsClosed() {
 		if d.sess != nil {
 			d.sess.Close()
@@ -66,7 +69,14 @@ func (d *DialerSession) DialContext(ctx context.Context, network, address string
 	}
 	stm, err := d.sess.Open()
 	if err != nil {
-		return d.DialContext(ctx, network, address)
+		if retry == 0 {
+			return nil, err
+		}
+		if d.sess != nil {
+			d.sess.Close()
+			d.sess = nil
+		}
+		return d.dialContext(ctx, network, address, retry-1)
 	}
 	return newConn(stm, d.localAddr, d.remoteAddr), nil
 }
