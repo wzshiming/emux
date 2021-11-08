@@ -22,14 +22,18 @@ type Handshake interface {
 }
 
 type handshake struct {
-	mut  sync.Mutex
-	buf  []byte
-	data []byte
+	mut     sync.Mutex
+	bufPool sync.Pool
+	data    []byte
 }
 
 func NewHandshake(h []byte) Handshake {
 	return &handshake{
-		buf:  make([]byte, len(h)),
+		bufPool: sync.Pool{
+			New: func() interface{} {
+				return make([]byte, len(h))
+			},
+		},
 		data: h,
 	}
 }
@@ -40,14 +44,14 @@ func (h *handshake) Handshake(rw io.ReadWriter) error {
 		return err
 	}
 
-	h.mut.Lock()
-	defer h.mut.Unlock()
-	_, err = io.ReadFull(rw, h.buf)
+	buf := h.bufPool.Get().([]byte)
+	defer h.bufPool.Put(buf)
+	_, err = io.ReadFull(rw, buf)
 	if err != nil {
 		return err
 	}
-	if !bytes.Equal(h.data, h.buf) {
-		return fmt.Errorf("handshake error %q", h.buf)
+	if !bytes.Equal(h.data, buf) {
+		return fmt.Errorf("handshake error %q", buf)
 	}
 	return nil
 }
