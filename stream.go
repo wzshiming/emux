@@ -15,6 +15,7 @@ type stream struct {
 	writer *io.PipeWriter
 	*io.PipeReader
 	ready chan struct{}
+	close chan struct{}
 	mut   *sync.Mutex
 	once  sync.Once
 }
@@ -28,6 +29,7 @@ func newStream(writer *Encode, mut *sync.Mutex, sid uint64) *stream {
 		PipeReader: r,
 		mut:        mut,
 		ready:      make(chan struct{}),
+		close:      make(chan struct{}),
 	}
 }
 
@@ -40,7 +42,9 @@ func (w *stream) connected() error {
 }
 
 func (w *stream) Close() error {
-	return w.disconnect()
+	err := w.disconnect()
+	<-w.close
+	return err
 }
 
 func (w *stream) disconnect() error {

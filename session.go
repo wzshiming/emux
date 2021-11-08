@@ -57,14 +57,17 @@ func (s *Session) Close() error {
 	if !atomic.CompareAndSwapUint32(&s.isClose, 0, 1) {
 		return nil
 	}
-	readers.Put(s.decode.r.(*bufio.Reader))
-	writers.Put(s.encode.w.(*bufio.Writer))
 	s.mut.Lock()
-	defer s.mut.Unlock()
+	defer func() {
+		s.mut.Unlock()
+		readers.Put(s.decode.r.(*bufio.Reader))
+		writers.Put(s.encode.w.(*bufio.Writer))
+	}()
 	for _, v := range s.sess {
 		v.Close()
 	}
 	close(s.acceptChan)
+
 	return s.closer.Close()
 }
 
@@ -217,6 +220,7 @@ func (s *Session) handleLoop() {
 				continue
 			}
 			s.freeStream(sid)
+			close(stm.close)
 		case CmdDisconnected:
 			stm := s.getStream(sid)
 			if stm == nil {
@@ -226,6 +230,7 @@ func (s *Session) handleLoop() {
 				continue
 			}
 			s.freeStream(sid)
+			close(stm.close)
 		case CmdData:
 			stm := s.getStream(sid)
 			if stm == nil {
