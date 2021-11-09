@@ -18,9 +18,8 @@ var (
 type Session struct {
 	mut sync.RWMutex
 
-	idPool sync.Pool
+	idPool *idPool
 	sess   map[uint64]*stream
-	index  uint64
 
 	decode    *Decode
 	encode    *Encode
@@ -41,7 +40,7 @@ func NewSession(s io.ReadWriteCloser) *Session {
 	reader := readers.Get(s)
 	writer := writers.Get(s)
 	sess := &Session{
-		index:      0,
+		idPool:     newIDPool(),
 		sess:       map[uint64]*stream{},
 		decode:     NewDecode(reader),
 		encode:     NewEncode(writer),
@@ -110,14 +109,9 @@ func (s *Session) openStream() *stream {
 	s.mut.Lock()
 	defer s.mut.Unlock()
 
-	var sid uint64
-	pid := s.idPool.Get()
-	if pid == nil {
-		s.index++
-		sid = s.index
-	} else {
-		id := pid.(uint64)
-		sid = id
+	sid := s.idPool.Get()
+	if sid == 0 {
+		return nil
 	}
 
 	stm := newStream(s.encode, &s.writerMut, sid, s.Timeout)
