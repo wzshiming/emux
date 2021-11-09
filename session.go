@@ -12,7 +12,7 @@ import (
 )
 
 var (
-	ErrClosed = errors.New("closed")
+	ErrClosed = errors.New("use of closed network connection")
 )
 
 type Session struct {
@@ -65,18 +65,19 @@ func (s *Session) Close() error {
 	if !atomic.CompareAndSwapUint32(&s.isClose, 0, 1) {
 		return nil
 	}
-	s.mut.Lock()
-	defer func() {
-		s.mut.Unlock()
-		readers.Put(s.decode.r.(*bufio.Reader))
-		writers.Put(s.encode.w.(*bufio.Writer))
-	}()
-	for _, v := range s.sess {
-		v.Close()
-	}
-	close(s.acceptChan)
 
-	return s.closer.Close()
+	s.mut.Lock()
+	defer s.mut.Unlock()
+	s.writerMut.Lock()
+	defer s.writerMut.Unlock()
+	close(s.acceptChan)
+	s.encode.WriteByte(byte(CmdClose))
+	for _, stm := range s.sess {
+		stm.writer.Close()
+		stm.shutdown()
+	}
+	s.closer.Close()
+	return nil
 }
 
 func (s *Session) Accept() (io.ReadWriteCloser, error) {
@@ -147,6 +148,11 @@ func (s *Session) getStream(sid uint64) *stream {
 }
 
 func (s *Session) handleLoop() {
+	defer func() {
+		s.Close()
+		readers.Put(s.decode.r.(*bufio.Reader))
+		writers.Put(s.encode.w.(*bufio.Writer))
+	}()
 	var buf []byte
 	if s.BytesPool != nil {
 		buf = s.BytesPool.Get()
@@ -164,6 +170,8 @@ func (s *Session) handleLoop() {
 		}
 		cmd := Cmd(c)
 		switch cmd {
+		case CmdClose:
+			return
 		case CmdConnect, CmdConnected, CmdDisconnect, CmdDisconnected, CmdData:
 		default:
 			if s.Logger != nil {
@@ -206,7 +214,8 @@ func (s *Session) handleLoop() {
 				continue
 			}
 			close(stm.ready)
-		case CmdDisconnect:
+		case CmdDisconnect,
+			CmdDisconnected: // when both ends are closed at the same time, CmdDisconnect needs to be treated as CmdDisconnected
 			stm := s.getStream(sid)
 			if stm == nil {
 				if s.Logger != nil {
@@ -214,6 +223,7 @@ func (s *Session) handleLoop() {
 				}
 				continue
 			}
+
 			err = stm.disconnected()
 			if err != nil {
 				if s.Logger != nil {
@@ -222,17 +232,6 @@ func (s *Session) handleLoop() {
 				continue
 			}
 			s.freeStream(sid)
-			close(stm.close)
-		case CmdDisconnected:
-			stm := s.getStream(sid)
-			if stm == nil {
-				if s.Logger != nil {
-					s.Logger.Println("emux: get stream", "cmd", cmd, "sid", sid, "err", "unknown stream id")
-				}
-				continue
-			}
-			s.freeStream(sid)
-			close(stm.close)
 		case CmdData:
 			stm := s.getStream(sid)
 			if stm == nil {

@@ -13,7 +13,13 @@ type Cmd uint8
 //        5 ------|/                            \|------ 5
 
 const (
-	_ Cmd = iota
+
+	// 0         1
+	// +---------+
+	// | Command |
+	// +---------+
+
+	CmdClose Cmd = 0
 
 	// 0         1         (StreamID Length + 1)
 	// +---------+---------+
