@@ -66,11 +66,8 @@ func (s *Session) Close() error {
 		return nil
 	}
 	s.mut.Lock()
-	defer func() {
-		s.mut.Unlock()
-		readers.Put(s.decode.r.(*bufio.Reader))
-		writers.Put(s.encode.w.(*bufio.Writer))
-	}()
+	defer s.mut.Unlock()
+
 	for _, v := range s.sess {
 		v.Close()
 	}
@@ -147,6 +144,11 @@ func (s *Session) getStream(sid uint64) *stream {
 }
 
 func (s *Session) handleLoop() {
+	defer func() {
+		readers.Put(s.decode.r.(*bufio.Reader))
+		writers.Put(s.encode.w.(*bufio.Writer))
+	}()
+
 	var buf []byte
 	if s.BytesPool != nil {
 		buf = s.BytesPool.Get()
