@@ -8,6 +8,11 @@ import (
 	"net"
 	"sync"
 	"sync/atomic"
+	"time"
+)
+
+var (
+	ErrClosed = errors.New("closed")
 )
 
 type Session struct {
@@ -26,6 +31,8 @@ type Session struct {
 
 	isClose uint32
 
+	Timeout time.Duration
+
 	Logger    Logger
 	BytesPool BytesPool
 }
@@ -39,6 +46,7 @@ func NewSession(s io.ReadWriteCloser) *Session {
 		decode:     NewDecode(reader),
 		encode:     NewEncode(writer),
 		closer:     s,
+		Timeout:    10 * time.Second,
 		acceptChan: make(chan *stream, 0),
 	}
 	go sess.run()
@@ -95,7 +103,6 @@ func (s *Session) Open() (io.ReadWriteCloser, error) {
 	if err != nil {
 		return nil, err
 	}
-	<-wc.ready
 	return wc, nil
 }
 
@@ -113,7 +120,7 @@ func (s *Session) openStream() *stream {
 		sid = id
 	}
 
-	stm := newStream(s.encode, &s.writerMut, sid)
+	stm := newStream(s.encode, &s.writerMut, sid, s.Timeout)
 	s.sess[sid] = stm
 	return stm
 }
@@ -122,7 +129,7 @@ func (s *Session) acceptStream(sid uint64) *stream {
 	s.mut.Lock()
 	defer s.mut.Unlock()
 
-	stm := newStream(s.encode, &s.writerMut, sid)
+	stm := newStream(s.encode, &s.writerMut, sid, s.Timeout)
 	s.sess[sid] = stm
 	return stm
 }

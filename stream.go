@@ -3,6 +3,7 @@ package emux
 import (
 	"io"
 	"sync"
+	"time"
 )
 
 const (
@@ -14,13 +15,14 @@ type stream struct {
 	w      *Encode
 	writer *io.PipeWriter
 	*io.PipeReader
-	ready chan struct{}
-	close chan struct{}
-	mut   *sync.Mutex
-	once  sync.Once
+	ready   chan struct{}
+	close   chan struct{}
+	mut     *sync.Mutex
+	once    sync.Once
+	timeout time.Duration
 }
 
-func newStream(writer *Encode, mut *sync.Mutex, sid uint64) *stream {
+func newStream(writer *Encode, mut *sync.Mutex, sid uint64, timeout time.Duration) *stream {
 	r, w := io.Pipe()
 	return &stream{
 		sid:        sid,
@@ -30,75 +32,98 @@ func newStream(writer *Encode, mut *sync.Mutex, sid uint64) *stream {
 		mut:        mut,
 		ready:      make(chan struct{}),
 		close:      make(chan struct{}),
+		timeout:    timeout,
 	}
 }
 
-func (w *stream) connect() error {
-	return w.exec(CmdConnect)
+func (s *stream) connect() error {
+	err := s.exec(CmdConnect)
+	if err != nil {
+		return err
+	}
+	timer := time.NewTimer(s.timeout)
+	defer timer.Stop()
+	select {
+	case <-s.ready:
+		return nil
+	case <-s.close:
+		return ErrClosed
+	case <-timer.C:
+		return ErrTimeout
+	}
 }
 
-func (w *stream) connected() error {
-	return w.exec(CmdConnected)
+func (s *stream) connected() error {
+	return s.exec(CmdConnected)
 }
 
-func (w *stream) Close() error {
-	err := w.disconnect()
-	<-w.close
-	return err
+func (s *stream) Close() error {
+	err := s.disconnect()
+	if err != nil {
+		return err
+	}
+	timer := time.NewTimer(s.timeout)
+	defer timer.Stop()
+	select {
+	case <-s.close:
+		return nil
+	case <-timer.C:
+		return ErrTimeout
+	}
 }
 
-func (w *stream) disconnect() error {
+func (s *stream) disconnect() error {
 	var err error
-	w.once.Do(func() {
-		err = w.exec(CmdDisconnect)
+	s.once.Do(func() {
+		err = s.exec(CmdDisconnect)
 	})
 	return err
 }
 
-func (w *stream) disconnected() error {
+func (s *stream) disconnected() error {
 	var err error
-	w.once.Do(func() {
-		err = w.exec(CmdDisconnected)
+	s.once.Do(func() {
+		err = s.exec(CmdDisconnected)
 	})
 	return err
 }
 
-func (w *stream) Write(b []byte) (int, error) {
+func (s *stream) Write(b []byte) (int, error) {
 	l := len(b)
 	for len(b) > packetSize {
-		err := w.write(b[:packetSize])
+		err := s.write(b[:packetSize])
 		if err != nil {
 			return 0, err
 		}
 		b = b[packetSize:]
 	}
-	err := w.write(b)
+	err := s.write(b)
 	if err != nil {
 		return 0, err
 	}
 	return l, nil
 }
 
-func (w *stream) write(b []byte) error {
-	w.mut.Lock()
-	defer w.mut.Unlock()
-	err := w.w.WriteCmd(CmdData, w.sid)
+func (s *stream) write(b []byte) error {
+	s.mut.Lock()
+	defer s.mut.Unlock()
+	err := s.w.WriteCmd(CmdData, s.sid)
 	if err != nil {
 		return err
 	}
-	err = w.w.WriteBytes(b)
+	err = s.w.WriteBytes(b)
 	if err != nil {
 		return err
 	}
-	return w.w.Flush()
+	return s.w.Flush()
 }
 
-func (w *stream) exec(cmd Cmd) error {
-	w.mut.Lock()
-	defer w.mut.Unlock()
-	err := w.w.WriteCmd(cmd, w.sid)
+func (s *stream) exec(cmd Cmd) error {
+	s.mut.Lock()
+	defer s.mut.Unlock()
+	err := s.w.WriteCmd(cmd, s.sid)
 	if err != nil {
 		return err
 	}
-	return w.w.Flush()
+	return s.w.Flush()
 }
