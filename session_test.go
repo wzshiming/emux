@@ -2,8 +2,10 @@ package emux
 
 import (
 	"fmt"
+	"io"
 	"math"
 	"net"
+	"strings"
 	"testing"
 )
 
@@ -26,6 +28,9 @@ func TestSession(t *testing.T) {
 				for {
 					stm, err := sess.Accept()
 					if err != nil {
+						if strings.Contains(err.Error(), "use of closed network connection") {
+							return
+						}
 						t.Fatal(err)
 					}
 					buf := make([]byte, math.MaxUint16)
@@ -33,10 +38,16 @@ func TestSession(t *testing.T) {
 						for {
 							n, err := stm.Read(buf)
 							if err != nil {
+								if err == io.EOF {
+									return
+								}
 								t.Fatal(err)
 							}
 							_, err = stm.Write([]byte("echo " + string(buf[:n])))
 							if err != nil {
+								if strings.Contains(err.Error(), "use of closed network connection") {
+									return
+								}
 								t.Fatal(err)
 							}
 						}
@@ -47,7 +58,7 @@ func TestSession(t *testing.T) {
 	}()
 
 	buf := make([]byte, math.MaxUint16)
-	for i := 0; i != 1; i++ {
+	for i := 0; i != 5; i++ {
 		conn, err := net.Dial("tcp", listener.Addr().String())
 		if err != nil {
 			t.Fatal(err)
@@ -62,7 +73,7 @@ func TestSession(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		for j := 0; j != 1; j++ {
+		for j := 0; j != 5; j++ {
 			msg := fmt.Sprintf("hello %d %d !!!!!!", i, j)
 			_, err := stm.Write([]byte(msg))
 			if err != nil {
@@ -77,5 +88,6 @@ func TestSession(t *testing.T) {
 			}
 			t.Log(string(buf[:n]))
 		}
+		sess.Close()
 	}
 }

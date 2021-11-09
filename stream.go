@@ -58,24 +58,33 @@ func (s *stream) connected() error {
 }
 
 func (s *stream) Close() error {
-	err := s.disconnect()
-	if err != nil {
-		return err
+	if s.isClose() {
+		return nil
 	}
-	timer := time.NewTimer(s.timeout)
-	defer timer.Stop()
+	return s.disconnect()
+}
+
+func (s *stream) isClose() bool {
 	select {
 	case <-s.close:
-		return nil
-	case <-timer.C:
-		return ErrTimeout
+		return true
+	default:
+		return false
 	}
+}
+
+func (s *stream) shutdown() {
+	s.once.Do(func() {
+		close(s.close)
+	})
+	return
 }
 
 func (s *stream) disconnect() error {
 	var err error
 	s.once.Do(func() {
 		err = s.exec(CmdDisconnect)
+		close(s.close)
 	})
 	return err
 }
@@ -84,11 +93,22 @@ func (s *stream) disconnected() error {
 	var err error
 	s.once.Do(func() {
 		err = s.exec(CmdDisconnected)
+		close(s.close)
 	})
 	return err
 }
 
+func (s *stream) Read(b []byte) (int, error) {
+	if s.isClose() {
+		return 0, ErrClosed
+	}
+	return s.PipeReader.Read(b)
+}
+
 func (s *stream) Write(b []byte) (int, error) {
+	if s.isClose() {
+		return 0, ErrClosed
+	}
 	l := len(b)
 	for len(b) > packetSize {
 		err := s.write(b[:packetSize])
@@ -105,6 +125,9 @@ func (s *stream) Write(b []byte) (int, error) {
 }
 
 func (s *stream) write(b []byte) error {
+	if s.isClose() {
+		return ErrClosed
+	}
 	s.mut.Lock()
 	defer s.mut.Unlock()
 	err := s.w.WriteCmd(CmdData, s.sid)
@@ -119,6 +142,9 @@ func (s *stream) write(b []byte) error {
 }
 
 func (s *stream) exec(cmd Cmd) error {
+	if s.isClose() {
+		return ErrClosed
+	}
 	s.mut.Lock()
 	defer s.mut.Unlock()
 	err := s.w.WriteCmd(cmd, s.sid)
