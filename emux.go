@@ -16,7 +16,7 @@ type ListenConfigSession struct {
 func NewListenerConfig(listener ListenConfig) *ListenConfigSession {
 	return &ListenConfigSession{
 		listenConfig: listener,
-		Handshake:    DefaultHandshake,
+		Handshake:    DefaultServerHandshake,
 	}
 }
 
@@ -33,7 +33,7 @@ type DialerSession struct {
 func NewDialer(dialer Dialer) *DialerSession {
 	return &DialerSession{
 		dialer:    dialer,
-		Handshake: DefaultHandshake,
+		Handshake: DefaultClientHandshake,
 	}
 }
 
@@ -51,8 +51,9 @@ func (d *DialerSession) dialContext(ctx context.Context, network, address string
 			return nil, err
 		}
 		if d.Handshake != nil {
-			err := d.Handshake.Handshake(conn)
+			err := d.Handshake.Handshake(ctx, conn)
 			if err != nil {
+				conn.Close()
 				return nil, err
 			}
 		}
@@ -113,7 +114,7 @@ func NewListener(ctx context.Context, listener net.Listener) *ListenerSession {
 		cancel:    cancel,
 		listener:  listener,
 		conns:     make(chan net.Conn),
-		Handshake: DefaultHandshake,
+		Handshake: DefaultServerHandshake,
 	}
 	go l.run()
 	return l
@@ -131,11 +132,12 @@ func (l *ListenerSession) run() {
 		}
 		go func() {
 			if l.Handshake != nil {
-				err := l.Handshake.Handshake(conn)
+				err := l.Handshake.Handshake(l.ctx, conn)
 				if err != nil {
 					if l.Logger != nil {
 						l.Logger.Println("emux: listener: handshake:", "err", err)
 					}
+					conn.Close()
 					return
 				}
 			}
