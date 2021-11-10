@@ -23,7 +23,7 @@ func TestSession(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			sess := NewSession(conn)
+			sess := NewServer(conn)
 			go func() {
 				defer sess.Close()
 				for {
@@ -64,12 +64,12 @@ func TestSession(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		sess := NewSession(conn)
-		_, err = sess.Open(context.Background())
+		sess := NewClient(conn)
+		_, err = sess.Dial(context.Background())
 		if err != nil {
 			t.Fatal(err)
 		}
-		stm, err := sess.Open(context.Background())
+		stm, err := sess.Dial(context.Background())
 		if err != nil {
 			t.Fatal(err)
 		}

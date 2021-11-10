@@ -23,18 +23,21 @@ type stream struct {
 	timeout time.Duration
 }
 
-func newStream(writer *Encode, mut *sync.Mutex, sid uint64, timeout time.Duration) *stream {
+func newStream(writer *Encode, mut *sync.Mutex, sid uint64, timeout time.Duration, cli bool) *stream {
 	r, w := io.Pipe()
-	return &stream{
+	s := &stream{
 		sid:        sid,
 		w:          writer,
 		writer:     w,
 		PipeReader: r,
 		mut:        mut,
-		ready:      make(chan struct{}),
 		close:      make(chan struct{}),
 		timeout:    timeout,
 	}
+	if cli {
+		s.ready = make(chan struct{})
+	}
+	return s
 }
 
 func (s *stream) connect(ctx context.Context) error {

@@ -24,7 +24,7 @@ type DialerSession struct {
 	dialer     Dialer
 	localAddr  net.Addr
 	remoteAddr net.Addr
-	sess       *Session
+	sess       *Client
 	BytesPool  BytesPool
 	Logger     Logger
 	Handshake  Handshake
@@ -40,6 +40,7 @@ func NewDialer(dialer Dialer) *DialerSession {
 func (d *DialerSession) DialContext(ctx context.Context, network, address string) (net.Conn, error) {
 	return d.dialContext(ctx, network, address, 3)
 }
+
 func (d *DialerSession) dialContext(ctx context.Context, network, address string, retry int) (net.Conn, error) {
 	if d.sess == nil || d.sess.IsClosed() {
 		if d.sess != nil {
@@ -58,7 +59,7 @@ func (d *DialerSession) dialContext(ctx context.Context, network, address string
 			}
 		}
 
-		sess := NewSession(conn)
+		sess := NewClient(conn)
 		sess.Logger = d.Logger
 		sess.BytesPool = d.BytesPool
 		if err != nil {
@@ -68,7 +69,7 @@ func (d *DialerSession) dialContext(ctx context.Context, network, address string
 		d.remoteAddr = conn.RemoteAddr()
 		d.sess = sess
 	}
-	stm, err := d.sess.Open(ctx)
+	stm, err := d.sess.Dial(ctx)
 	if err != nil {
 		if retry == 0 {
 			return nil, err
@@ -152,7 +153,7 @@ func (l *ListenerSession) run() {
 }
 
 func (l *ListenerSession) acceptSession(ctx context.Context, conn net.Conn) error {
-	sess := NewSession(conn)
+	sess := NewServer(conn)
 	sess.Logger = l.Logger
 	sess.BytesPool = l.BytesPool
 	for l.ctx.Err() == nil && !sess.IsClosed() {

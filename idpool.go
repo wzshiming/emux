@@ -14,6 +14,7 @@ var (
 )
 
 type idPool struct {
+	mut   sync.Mutex
 	ring  *ring.Ring
 	count uint64
 	index uint64
@@ -25,6 +26,9 @@ func newIDPool() *idPool {
 }
 
 func (s *idPool) Get() uint64 {
+	s.mut.Lock()
+	defer s.mut.Unlock()
+
 	// less than 0x80 , that StreamID is takes only one byte
 	if s.index >= 0x80 {
 		s.index++
@@ -44,6 +48,9 @@ func (s *idPool) Get() uint64 {
 }
 
 func (s *idPool) Put(id uint64) {
+	s.mut.Lock()
+	defer s.mut.Unlock()
+
 	r := ringPools.Get().(*ring.Ring)
 	r.Value = id
 	if s.ring == nil {
