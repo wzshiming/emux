@@ -2,6 +2,7 @@ package emux
 
 import (
 	"bufio"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -80,18 +81,22 @@ func (s *Session) Close() error {
 	return nil
 }
 
-func (s *Session) Accept() (io.ReadWriteCloser, error) {
+func (s *Session) Accept(ctx context.Context) (io.ReadWriteCloser, error) {
 	if s.IsClosed() {
 		return nil, fmt.Errorf("session is closed")
 	}
-	conn, ok := <-s.acceptChan
-	if !ok {
-		return nil, net.ErrClosed
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case conn, ok := <-s.acceptChan:
+		if !ok {
+			return nil, net.ErrClosed
+		}
+		return conn, nil
 	}
-	return conn, nil
 }
 
-func (s *Session) Open() (io.ReadWriteCloser, error) {
+func (s *Session) Open(ctx context.Context) (io.ReadWriteCloser, error) {
 	if s.IsClosed() {
 		return nil, fmt.Errorf("session is closed")
 	}
@@ -99,7 +104,7 @@ func (s *Session) Open() (io.ReadWriteCloser, error) {
 	if wc == nil {
 		return nil, fmt.Errorf("emux: no free stream id")
 	}
-	err := wc.connect()
+	err := wc.connect(ctx)
 	if err != nil {
 		return nil, err
 	}

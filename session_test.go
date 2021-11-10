@@ -1,6 +1,7 @@
 package emux
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"math"
@@ -26,7 +27,7 @@ func TestSession(t *testing.T) {
 			go func() {
 				defer sess.Close()
 				for {
-					stm, err := sess.Accept()
+					stm, err := sess.Accept(context.Background())
 					if err != nil {
 						if strings.Contains(err.Error(), "use of closed network connection") {
 							return
@@ -64,11 +65,11 @@ func TestSession(t *testing.T) {
 			t.Fatal(err)
 		}
 		sess := NewSession(conn)
-		_, err = sess.Open()
+		_, err = sess.Open(context.Background())
 		if err != nil {
 			t.Fatal(err)
 		}
-		stm, err := sess.Open()
+		stm, err := sess.Open(context.Background())
 		if err != nil {
 			t.Fatal(err)
 		}

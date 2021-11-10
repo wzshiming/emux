@@ -68,7 +68,7 @@ func (d *DialerSession) dialContext(ctx context.Context, network, address string
 		d.remoteAddr = conn.RemoteAddr()
 		d.sess = sess
 	}
-	stm, err := d.sess.Open()
+	stm, err := d.sess.Open(ctx)
 	if err != nil {
 		if retry == 0 {
 			return nil, err
@@ -141,7 +141,7 @@ func (l *ListenerSession) run() {
 					return
 				}
 			}
-			err = l.acceptSession(conn)
+			err = l.acceptSession(l.ctx, conn)
 			if err != nil {
 				if l.Logger != nil {
 					l.Logger.Println("emux: listener: accept session:", "err", err)
@@ -151,12 +151,12 @@ func (l *ListenerSession) run() {
 	}
 }
 
-func (l *ListenerSession) acceptSession(conn net.Conn) error {
+func (l *ListenerSession) acceptSession(ctx context.Context, conn net.Conn) error {
 	sess := NewSession(conn)
 	sess.Logger = l.Logger
 	sess.BytesPool = l.BytesPool
 	for l.ctx.Err() == nil && !sess.IsClosed() {
-		stm, err := sess.Accept()
+		stm, err := sess.Accept(ctx)
 		if err != nil {
 			return err
 		}

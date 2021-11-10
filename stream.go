@@ -1,6 +1,7 @@
 package emux
 
 import (
+	"context"
 	"io"
 	"sync"
 	"time"
@@ -36,7 +37,7 @@ func newStream(writer *Encode, mut *sync.Mutex, sid uint64, timeout time.Duratio
 	}
 }
 
-func (s *stream) connect() error {
+func (s *stream) connect(ctx context.Context) error {
 	err := s.exec(CmdConnect)
 	if err != nil {
 		return err
@@ -44,6 +45,9 @@ func (s *stream) connect() error {
 	timer := time.NewTimer(s.timeout)
 	defer timer.Stop()
 	select {
+	case <-ctx.Done():
+		s.Close()
+		return ctx.Err()
 	case <-s.ready:
 		return nil
 	case <-s.close:
