@@ -7,38 +7,39 @@ import (
 	"time"
 )
 
-const (
-	packetSize = 1<<16 - 1 - 1024
-)
-
 type stream struct {
 	sid    uint64
 	w      *Encode
 	writer *io.PipeWriter
 	*io.PipeReader
-	ready   chan struct{}
-	close   chan struct{}
-	mut     *sync.Mutex
-	once    sync.Once
-	timeout time.Duration
+	ready       chan struct{}
+	close       chan struct{}
+	mut         *sync.Mutex
+	once        sync.Once
+	timeout     time.Duration
+	instruction *Instruction
 }
 
-func newStream(writer *Encode, mut *sync.Mutex, sid uint64, timeout time.Duration) *stream {
+func newStream(writer *Encode, instruction *Instruction, mut *sync.Mutex, sid uint64, timeout time.Duration, cli bool) *stream {
 	r, w := io.Pipe()
-	return &stream{
-		sid:        sid,
-		w:          writer,
-		writer:     w,
-		PipeReader: r,
-		mut:        mut,
-		ready:      make(chan struct{}),
-		close:      make(chan struct{}),
-		timeout:    timeout,
+	s := &stream{
+		sid:         sid,
+		w:           writer,
+		writer:      w,
+		PipeReader:  r,
+		mut:         mut,
+		close:       make(chan struct{}),
+		timeout:     timeout,
+		instruction: instruction,
 	}
+	if cli {
+		s.ready = make(chan struct{})
+	}
+	return s
 }
 
 func (s *stream) connect(ctx context.Context) error {
-	err := s.exec(CmdConnect)
+	err := s.exec(s.instruction.Connect)
 	if err != nil {
 		return err
 	}
@@ -58,7 +59,7 @@ func (s *stream) connect(ctx context.Context) error {
 }
 
 func (s *stream) connected() error {
-	return s.exec(CmdConnected)
+	return s.exec(s.instruction.Connected)
 }
 
 func (s *stream) Close() error {
@@ -87,7 +88,7 @@ func (s *stream) shutdown() {
 func (s *stream) disconnect() error {
 	var err error
 	s.once.Do(func() {
-		err = s.exec(CmdDisconnect)
+		err = s.exec(s.instruction.Disconnect)
 		close(s.close)
 	})
 	return err
@@ -96,7 +97,7 @@ func (s *stream) disconnect() error {
 func (s *stream) disconnected() error {
 	var err error
 	s.once.Do(func() {
-		err = s.exec(CmdDisconnected)
+		err = s.exec(s.instruction.Disconnected)
 		close(s.close)
 	})
 	return err
@@ -114,12 +115,12 @@ func (s *stream) Write(b []byte) (int, error) {
 		return 0, ErrClosed
 	}
 	l := len(b)
-	for len(b) > packetSize {
-		err := s.write(b[:packetSize])
+	for uint64(len(b)) > s.instruction.MaxDataPacketSize {
+		err := s.write(b[:s.instruction.MaxDataPacketSize])
 		if err != nil {
 			return 0, err
 		}
-		b = b[packetSize:]
+		b = b[s.instruction.MaxDataPacketSize:]
 	}
 	err := s.write(b)
 	if err != nil {
@@ -134,7 +135,7 @@ func (s *stream) write(b []byte) error {
 	}
 	s.mut.Lock()
 	defer s.mut.Unlock()
-	err := s.w.WriteCmd(CmdData, s.sid)
+	err := s.w.WriteCmd(s.instruction.Data, s.sid)
 	if err != nil {
 		return err
 	}
@@ -145,7 +146,7 @@ func (s *stream) write(b []byte) error {
 	return s.w.Flush()
 }
 
-func (s *stream) exec(cmd Cmd) error {
+func (s *stream) exec(cmd uint8) error {
 	if s.isClose() {
 		return ErrClosed
 	}

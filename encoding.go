@@ -44,9 +44,9 @@ func (e *Encode) WriteByte(b byte) error {
 	return err
 }
 
-func (e *Encode) WriteCmd(cmd Cmd, sid uint64) error {
+func (e *Encode) WriteCmd(cmd uint8, sid uint64) error {
 	var buf [binary.MaxVarintLen64 + 1]byte
-	buf[0] = byte(cmd)
+	buf[0] = cmd
 	n := binary.PutUvarint(buf[1:], sid)
 	_, err := e.w.Write(buf[:n+1])
 	return err

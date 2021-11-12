@@ -5,6 +5,10 @@ import (
 	"net"
 )
 
+const (
+	bufSize = 32 * 1024
+)
+
 // ListenConfig contains options for listening to an address.
 type ListenConfig interface {
 	Listen(ctx context.Context, network, address string) (net.Listener, error)
@@ -20,6 +24,7 @@ type Logger interface {
 	Println(v ...interface{})
 }
 
+// BytesPool is the interface for a bytes pool.
 type BytesPool interface {
 	Get() []byte
 	Put([]byte)

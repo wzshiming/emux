@@ -6,8 +6,6 @@ import (
 	"sync"
 )
 
-const bufSize = 32 * 1024
-
 var (
 	readers = newReaderPool()
 	writers = newWriterPool()
