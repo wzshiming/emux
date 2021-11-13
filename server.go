@@ -2,13 +2,13 @@ package emux
 
 import (
 	"context"
-	"fmt"
 	"io"
-	"net"
+	"sync"
 )
 
 type Server struct {
 	acceptChan chan *stream
+	onceStart  sync.Once
 
 	session
 }
@@ -18,25 +18,24 @@ func NewServer(s io.ReadWriteCloser, instruction *Instruction) *Server {
 		acceptChan: make(chan *stream, 0),
 		session:    newSession(s, instruction),
 	}
-	go sess.run()
 	return sess
 }
 
-func (s *Server) run() {
-	s.handleLoop(s.handleConnect, nil)
-	s.Close()
+func (s *Server) start() {
+	go s.handleLoop(s.handleConnect, nil)
 }
 
 func (s *Server) Accept(ctx context.Context) (io.ReadWriteCloser, error) {
+	s.onceStart.Do(s.start)
 	if s.IsClosed() {
-		return nil, fmt.Errorf("Server is closed")
+		return nil, ErrClosed
 	}
 	select {
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	case conn, ok := <-s.acceptChan:
 		if !ok {
-			return nil, net.ErrClosed
+			return nil, ErrClosed
 		}
 		return conn, nil
 	}

@@ -5,13 +5,14 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"sync"
 	"sync/atomic"
 	"time"
 )
 
 var (
-	ErrClosed = errors.New("use of closed network connection")
+	ErrClosed = net.ErrClosed
 )
 
 type session struct {

@@ -2,11 +2,11 @@ package emux
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"math"
 	"net"
-	"strings"
 	"testing"
 )
 
@@ -29,7 +29,7 @@ func TestSession(t *testing.T) {
 				for {
 					stm, err := sess.Accept(context.Background())
 					if err != nil {
-						if strings.Contains(err.Error(), "use of closed network connection") {
+						if errors.Is(err, ErrClosed) {
 							return
 						}
 						t.Fatal(err)
@@ -46,7 +46,7 @@ func TestSession(t *testing.T) {
 							}
 							_, err = stm.Write([]byte("echo " + string(buf[:n])))
 							if err != nil {
-								if strings.Contains(err.Error(), "use of closed network connection") {
+								if errors.Is(err, ErrClosed) {
 									return
 								}
 								t.Fatal(err)

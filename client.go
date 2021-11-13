@@ -4,10 +4,12 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"sync"
 )
 
 type Client struct {
-	idPool *idPool
+	idPool    *idPool
+	onceStart sync.Once
 
 	session
 }
@@ -17,18 +19,17 @@ func NewClient(s io.ReadWriteCloser, instruction *Instruction) *Client {
 		idPool:  newIDPool(),
 		session: newSession(s, instruction),
 	}
-	go sess.run()
 	return sess
 }
 
-func (c *Client) run() {
-	c.handleLoop(nil, c.handleConnected)
-	c.Close()
+func (c *Client) start() {
+	go c.handleLoop(nil, c.handleConnected)
 }
 
 func (c *Client) Dial(ctx context.Context) (io.ReadWriteCloser, error) {
+	c.onceStart.Do(c.start)
 	if c.IsClosed() {
-		return nil, fmt.Errorf("Client is closed")
+		return nil, ErrClosed
 	}
 	wc := c.dailStream()
 	if wc == nil {
