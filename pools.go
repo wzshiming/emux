@@ -25,15 +25,21 @@ func newReaderPool() *readerPool {
 	}
 }
 
-func (p *readerPool) Get(r io.Reader) *bufio.Reader {
+func (p *readerPool) Get(r io.Reader) DecodeReader {
+	if reader, ok := r.(DecodeReader); ok {
+		return reader
+	}
 	buf := p.pool.Get().(*bufio.Reader)
 	buf.Reset(r)
 	return buf
 }
 
-func (p *readerPool) Put(buf *bufio.Reader) {
-	buf.Reset(nil)
-	p.pool.Put(buf)
+func (p *readerPool) Put(buf DecodeReader) {
+	reader, ok := buf.(*bufio.Reader)
+	if ok {
+		reader.Reset(nil)
+		p.pool.Put(reader)
+	}
 }
 
 type writerPool struct {
@@ -50,13 +56,19 @@ func newWriterPool() *writerPool {
 	}
 }
 
-func (p *writerPool) Get(w io.Writer) *bufio.Writer {
+func (p *writerPool) Get(w io.Writer) EncodeWriter {
+	if writer, ok := w.(EncodeWriter); ok {
+		return writer
+	}
 	buf := p.pool.Get().(*bufio.Writer)
 	buf.Reset(w)
 	return buf
 }
 
-func (p *writerPool) Put(w *bufio.Writer) {
-	w.Reset(nil)
-	p.pool.Put(w)
+func (p *writerPool) Put(w EncodeWriter) {
+	writer, ok := w.(*bufio.Writer)
+	if ok {
+		writer.Reset(nil)
+		p.pool.Put(writer)
+	}
 }

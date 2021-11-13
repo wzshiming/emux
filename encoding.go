@@ -10,20 +10,30 @@ var (
 	ErrInvalidStream = fmt.Errorf("invalid stream")
 )
 
-type Encode struct {
-	w io.Writer
+type DecodeReader interface {
+	io.Reader
+	io.ByteReader
 }
 
-func NewEncode(w io.Writer) *Encode {
+type EncodeWriter interface {
+	io.Writer
+	Flush() error
+}
+
+type Encode struct {
+	EncodeWriter
+}
+
+func NewEncode(w EncodeWriter) *Encode {
 	return &Encode{
-		w: w,
+		EncodeWriter: w,
 	}
 }
 
 func (e *Encode) WriteUvarint(v uint64) error {
 	var buf [binary.MaxVarintLen64]byte
 	n := binary.PutUvarint(buf[:], v)
-	_, err := e.w.Write(buf[:n])
+	_, err := e.EncodeWriter.Write(buf[:n])
 	return err
 }
 
@@ -33,14 +43,14 @@ func (e *Encode) WriteBytes(b []byte) error {
 		return err
 	}
 	if len(b) > 0 {
-		_, err = e.w.Write(b)
+		_, err = e.EncodeWriter.Write(b)
 	}
 	return err
 }
 
 func (e *Encode) WriteByte(b byte) error {
 	var buf = [...]byte{b}
-	_, err := e.w.Write(buf[:])
+	_, err := e.EncodeWriter.Write(buf[:])
 	return err
 }
 
@@ -48,29 +58,22 @@ func (e *Encode) WriteCmd(cmd uint8, sid uint64) error {
 	var buf [binary.MaxVarintLen64 + 1]byte
 	buf[0] = cmd
 	n := binary.PutUvarint(buf[1:], sid)
-	_, err := e.w.Write(buf[:n+1])
+	_, err := e.EncodeWriter.Write(buf[:n+1])
 	return err
 }
 
-func (e *Encode) Flush() error {
-	if f, ok := e.w.(interface{ Flush() error }); ok {
-		return f.Flush()
-	}
-	return nil
-}
-
 type Decode struct {
-	r io.Reader
+	DecodeReader
 }
 
-func NewDecode(r io.Reader) *Decode {
+func NewDecode(r DecodeReader) *Decode {
 	return &Decode{
-		r: r,
+		DecodeReader: r,
 	}
 }
 
 func (d *Decode) ReadUvarint() (uint64, error) {
-	return binary.ReadUvarint(d)
+	return binary.ReadUvarint(d.DecodeReader)
 }
 
 func (d *Decode) ReadBytes() ([]byte, error) {
@@ -82,7 +85,7 @@ func (d *Decode) ReadBytes() ([]byte, error) {
 		return []byte{}, nil
 	}
 	buf := make([]byte, i)
-	_, err = io.ReadFull(d.r, buf)
+	_, err = io.ReadFull(d.DecodeReader, buf)
 	return buf, err
 }
 
@@ -92,10 +95,10 @@ func (d *Decode) WriteTo(w io.Writer, buf []byte) (int64, error) {
 		return 0, fmt.Errorf("read uvarint: %w: %s", ErrInvalidStream, err)
 	}
 
-	n, err := io.CopyBuffer(w, io.LimitReader(d.r, int64(i)), buf)
+	n, err := io.CopyBuffer(w, io.LimitReader(d.DecodeReader, int64(i)), buf)
 	if err != nil {
 		if l := int64(i) - n; l > 0 && w != io.Discard {
-			k, err0 := io.CopyBuffer(io.Discard, io.LimitReader(d.r, l), buf)
+			k, err0 := io.CopyBuffer(io.Discard, io.LimitReader(d.DecodeReader, l), buf)
 			if err0 != nil {
 				if k != l {
 					err = fmt.Errorf("%s: %w: %s", err, ErrInvalidStream, err0)
@@ -112,7 +115,7 @@ func (d *Decode) WriteTo(w io.Writer, buf []byte) (int64, error) {
 	}
 	if l := int64(i) - n; l > 0 {
 		if w != io.Discard {
-			k, err := io.CopyBuffer(io.Discard, io.LimitReader(d.r, l), buf)
+			k, err := io.CopyBuffer(io.Discard, io.LimitReader(d.DecodeReader, l), buf)
 			if err != nil {
 				if k != l {
 					err = fmt.Errorf("%w: %s", ErrInvalidStream, err)
@@ -124,13 +127,4 @@ func (d *Decode) WriteTo(w io.Writer, buf []byte) (int64, error) {
 		}
 	}
 	return int64(i), nil
-}
-
-func (d *Decode) ReadByte() (byte, error) {
-	if rb, ok := d.r.(io.ByteReader); ok {
-		return rb.ReadByte()
-	}
-	var buf [1]byte
-	_, err := d.r.Read(buf[:])
-	return buf[0], err
 }

@@ -155,8 +155,8 @@ func (s *session) handleData(cmd uint8, sid uint64, buf []byte) error {
 func (s *session) handleLoop(connectFunc, connectedFunc func(cmd uint8, sid uint64) error) {
 	defer func() {
 		s.Close()
-		readers.Put(s.decode.r.(*bufio.Reader))
-		writers.Put(s.encode.w.(*bufio.Writer))
+		readers.Put(s.decode.DecodeReader.(*bufio.Reader))
+		writers.Put(s.encode.EncodeWriter.(*bufio.Writer))
 	}()
 	var buf []byte
 	if s.BytesPool != nil {
