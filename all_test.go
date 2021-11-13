@@ -14,11 +14,13 @@ func TestEmux(t *testing.T) {
 	svc := httptest.NewUnstartedServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		writer.WriteHeader(200)
 	}))
-	l, err := net.Listen("tcp", ":0")
+
+	listenConfig := NewListenConfig(&net.ListenConfig{})
+	l, err := listenConfig.Listen(context.Background(), "tcp", ":0")
 	if err != nil {
 		t.Fatal(err)
 	}
-	listener := NewListener(context.Background(), l)
+	listener := l
 	svc.Listener = listener
 	svc.Start()
 
