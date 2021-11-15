@@ -11,7 +11,7 @@ type Client struct {
 	idPool    *idPool
 	onceStart sync.Once
 
-	session
+	*session
 }
 
 func NewClient(s io.ReadWriteCloser, instruction *Instruction) *Client {

@@ -10,7 +10,7 @@ type Server struct {
 	acceptChan chan *stream
 	onceStart  sync.Once
 
-	session
+	*session
 }
 
 func NewServer(s io.ReadWriteCloser, instruction *Instruction) *Server {

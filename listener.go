@@ -4,6 +4,7 @@ import (
 	"context"
 	"net"
 	"sync"
+	"time"
 )
 
 type ListenerSession struct {
@@ -16,6 +17,7 @@ type ListenerSession struct {
 	Logger      Logger
 	Handshake   Handshake
 	Instruction Instruction
+	Timeout     time.Duration
 }
 
 func NewListener(ctx context.Context, listener net.Listener) *ListenerSession {
@@ -27,6 +29,7 @@ func NewListener(ctx context.Context, listener net.Listener) *ListenerSession {
 		conns:       make(chan net.Conn),
 		Handshake:   DefaultServerHandshake,
 		Instruction: DefaultInstruction,
+		Timeout:     DefaultTimeout,
 	}
 	return l
 }
@@ -70,6 +73,7 @@ func (l *ListenerSession) acceptSession(ctx context.Context, conn net.Conn) erro
 	sess := NewServer(conn, &l.Instruction)
 	sess.Logger = l.Logger
 	sess.BytesPool = l.BytesPool
+	sess.Timeout = l.Timeout
 	for l.ctx.Err() == nil && !sess.IsClosed() {
 		stm, err := sess.Accept(ctx)
 		if err != nil {
