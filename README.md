@@ -1,7 +1,7 @@
 # EMux
 
 EMux(Express Multiplexing) is a simple, fast stream Multiplexer. 
-EMux is using a custom protocol, is not compatible with any other agreement, any similarity is purely coincidental.
+EMux is using a custom protocol, is not compatible with any other, any similarity is purely coincidental.
 
 [![Go Report Card](https://goreportcard.com/badge/github.com/wzshiming/emux)](https://goreportcard.com/report/github.com/wzshiming/emux)
 [![GoDoc](https://godoc.org/github.com/wzshiming/emux?status.svg)](https://godoc.org/github.com/wzshiming/emux)
