@@ -11,18 +11,17 @@ type Client struct {
 	idPool    *idPool
 	onceStart sync.Once
 
-	session
+	*session
 }
 
-func NewClient(s io.ReadWriteCloser, instruction *Instruction) *Client {
-	sess := &Client{
-		idPool:  newIDPool(),
-		session: newSession(s, instruction),
+func NewClient(stm io.ReadWriteCloser, instruction *Instruction) *Client {
+	return &Client{
+		session: newSession(stm, instruction),
 	}
-	return sess
 }
 
 func (c *Client) start() {
+	c.idPool = newIDPool()
 	go c.handleLoop(nil, c.handleConnected)
 }
 

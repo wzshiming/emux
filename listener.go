@@ -4,6 +4,8 @@ import (
 	"context"
 	"net"
 	"sync"
+	"sync/atomic"
+	"time"
 )
 
 type ListenerSession struct {
@@ -12,10 +14,12 @@ type ListenerSession struct {
 	listener    net.Listener
 	conns       chan net.Conn
 	startOnce   sync.Once
+	isClose     uint32
 	BytesPool   BytesPool
 	Logger      Logger
 	Handshake   Handshake
 	Instruction Instruction
+	Timeout     time.Duration
 }
 
 func NewListener(ctx context.Context, listener net.Listener) *ListenerSession {
@@ -27,6 +31,7 @@ func NewListener(ctx context.Context, listener net.Listener) *ListenerSession {
 		conns:       make(chan net.Conn),
 		Handshake:   DefaultServerHandshake,
 		Instruction: DefaultInstruction,
+		Timeout:     DefaultTimeout,
 	}
 	return l
 }
@@ -37,7 +42,7 @@ func (l *ListenerSession) start() {
 
 func (l *ListenerSession) run() {
 	defer l.Close()
-	for l.ctx.Err() == nil {
+	for l.ctx.Err() == nil && !l.IsClosed() {
 		conn, err := l.listener.Accept()
 		if err != nil {
 			if l.Logger != nil {
@@ -70,12 +75,20 @@ func (l *ListenerSession) acceptSession(ctx context.Context, conn net.Conn) erro
 	sess := NewServer(conn, &l.Instruction)
 	sess.Logger = l.Logger
 	sess.BytesPool = l.BytesPool
+	sess.Timeout = l.Timeout
+	defer sess.Close()
 	for l.ctx.Err() == nil && !sess.IsClosed() {
 		stm, err := sess.Accept(ctx)
 		if err != nil {
 			return err
 		}
-		l.conns <- newConn(stm, conn.LocalAddr(), conn.RemoteAddr())
+		conn := newConn(stm, conn.LocalAddr(), conn.RemoteAddr())
+		select {
+		case <-ctx.Done():
+			conn.Close()
+			return nil
+		case l.conns <- conn:
+		}
 	}
 	return nil
 }
@@ -83,15 +96,26 @@ func (l *ListenerSession) acceptSession(ctx context.Context, conn net.Conn) erro
 func (l *ListenerSession) Accept() (net.Conn, error) {
 	l.startOnce.Do(l.start)
 	select {
-	case conn := <-l.conns:
-		return conn, nil
 	case <-l.ctx.Done():
 		return nil, l.ctx.Err()
+	case conn, ok := <-l.conns:
+		if !ok {
+			return nil, ErrClosed
+		}
+		return conn, nil
 	}
 }
 
+func (l *ListenerSession) IsClosed() bool {
+	return atomic.LoadUint32(&l.isClose) == 1
+}
+
 func (l *ListenerSession) Close() error {
+	if !atomic.CompareAndSwapUint32(&l.isClose, 0, 1) {
+		return nil
+	}
 	l.cancel()
+	close(l.conns)
 	return l.listener.Close()
 }
 

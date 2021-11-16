@@ -3,6 +3,7 @@ package emux
 import (
 	"context"
 	"net"
+	"time"
 )
 
 type DialerSession struct {
@@ -14,6 +15,7 @@ type DialerSession struct {
 	Logger      Logger
 	Handshake   Handshake
 	Instruction Instruction
+	Timeout     time.Duration
 	Retry       int
 }
 
@@ -22,6 +24,7 @@ func NewDialer(dialer Dialer) *DialerSession {
 		dialer:      dialer,
 		Handshake:   DefaultClientHandshake,
 		Instruction: DefaultInstruction,
+		Timeout:     DefaultTimeout,
 		Retry:       3,
 	}
 }
@@ -51,6 +54,7 @@ func (d *DialerSession) dialContext(ctx context.Context, network, address string
 		sess := NewClient(conn, &d.Instruction)
 		sess.Logger = d.Logger
 		sess.BytesPool = d.BytesPool
+		sess.Timeout = d.Timeout
 		if err != nil {
 			return nil, err
 		}

@@ -1,11 +1,11 @@
 package emux
 
 import (
-	"bufio"
 	"errors"
 	"fmt"
 	"io"
 	"net"
+	"runtime"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -17,6 +17,8 @@ var (
 
 type session struct {
 	mut sync.RWMutex
+
+	closes []func()
 
 	sess map[uint64]*stream
 
@@ -34,17 +36,30 @@ type session struct {
 	BytesPool BytesPool
 }
 
-func newSession(s io.ReadWriteCloser, instruction *Instruction) session {
-	reader := readers.Get(s)
-	writer := writers.Get(s)
-	return session{
+func newSession(stm io.ReadWriteCloser, instruction *Instruction) *session {
+	reader := readers.Get(stm)
+	writer := writers.Get(stm)
+	s := &session{
 		sess:        map[uint64]*stream{},
 		decode:      NewDecode(reader),
 		encode:      NewEncode(writer),
 		instruction: instruction,
-		closer:      s,
-		Timeout:     10 * time.Second,
+		closer:      stm,
+		Timeout:     DefaultTimeout,
 	}
+
+	// recycling the reader and writer when all the streams are closed
+	if stm != reader.(interface{}) || stm != writer.(interface{}) {
+		runtime.SetFinalizer(s, func(s *session) {
+			if stm != reader.(interface{}) {
+				readers.Put(s.decode.DecodeReader)
+			}
+			if stm != writer.(interface{}) {
+				writers.Put(s.encode.EncodeWriter)
+			}
+		})
+	}
+	return s
 }
 
 func (s *session) IsClosed() bool {
@@ -60,19 +75,26 @@ func (s *session) Close() error {
 	defer s.mut.Unlock()
 	s.writerMut.Lock()
 	defer s.writerMut.Unlock()
+
 	s.encode.WriteByte(s.instruction.Close)
 	for _, stm := range s.sess {
-		stm.writer.Close()
 		stm.shutdown()
 	}
+	s.sess = nil
 	s.closer.Close()
+	if len(s.closes) != 0 {
+		for _, fn := range s.closes {
+			fn()
+		}
+		s.closes = nil
+	}
 	return nil
 }
 
 func (s *session) newStream(sid uint64, cli bool) *stream {
 	s.mut.Lock()
 	defer s.mut.Unlock()
-	stm := newStream(s.encode, s.instruction, &s.writerMut, sid, s.Timeout, cli)
+	stm := newStream(s, sid, cli)
 	s.sess[sid] = stm
 	return stm
 }
@@ -92,7 +114,7 @@ func (s *session) freeStream(sid uint64) {
 	defer s.mut.Unlock()
 	stm := s.sess[sid]
 	if stm != nil {
-		stm.writer.Close()
+		stm.shutdown()
 		delete(s.sess, sid)
 	}
 }
@@ -100,7 +122,6 @@ func (s *session) freeStream(sid uint64) {
 func (s *session) getStream(sid uint64) *stream {
 	s.mut.RLock()
 	defer s.mut.RUnlock()
-
 	return s.sess[sid]
 }
 
@@ -153,11 +174,7 @@ func (s *session) handleData(cmd uint8, sid uint64, buf []byte) error {
 }
 
 func (s *session) handleLoop(connectFunc, connectedFunc func(cmd uint8, sid uint64) error) {
-	defer func() {
-		s.Close()
-		readers.Put(s.decode.DecodeReader.(*bufio.Reader))
-		writers.Put(s.encode.EncodeWriter.(*bufio.Writer))
-	}()
+	defer s.Close()
 	var buf []byte
 	if s.BytesPool != nil {
 		buf = s.BytesPool.Get()

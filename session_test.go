@@ -36,6 +36,7 @@ func TestSession(t *testing.T) {
 					}
 					buf := make([]byte, math.MaxUint16)
 					go func() {
+						defer sess.Close()
 						for {
 							n, err := stm.Read(buf)
 							if err != nil {

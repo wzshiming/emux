@@ -10,18 +10,22 @@ type Server struct {
 	acceptChan chan *stream
 	onceStart  sync.Once
 
-	session
+	*session
 }
 
-func NewServer(s io.ReadWriteCloser, instruction *Instruction) *Server {
-	sess := &Server{
-		acceptChan: make(chan *stream, 0),
-		session:    newSession(s, instruction),
+func NewServer(stm io.ReadWriteCloser, instruction *Instruction) *Server {
+	return &Server{
+		session: newSession(stm, instruction),
 	}
-	return sess
 }
 
 func (s *Server) start() {
+	s.acceptChan = make(chan *stream, 0)
+	s.closes = []func(){
+		func() {
+			close(s.acceptChan)
+		},
+	}
 	go s.handleLoop(s.handleConnect, nil)
 }
 

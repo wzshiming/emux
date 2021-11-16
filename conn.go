@@ -14,9 +14,9 @@ var (
 	ErrTimeout = fmt.Errorf("timeout")
 )
 
-func newConn(stream io.ReadWriteCloser, localAddr net.Addr, remoteAddr net.Addr) net.Conn {
+func newConn(stm io.ReadWriteCloser, localAddr net.Addr, remoteAddr net.Addr) net.Conn {
 	return &conn{
-		ReadWriteCloser: stream,
+		readWriteCloser: stm,
 		localAddr:       localAddr,
 		remoteAddr:      remoteAddr,
 	}
@@ -25,7 +25,7 @@ func newConn(stream io.ReadWriteCloser, localAddr net.Addr, remoteAddr net.Addr)
 type conn struct {
 	localAddr       net.Addr
 	remoteAddr      net.Addr
-	ReadWriteCloser io.ReadWriteCloser
+	readWriteCloser io.ReadWriteCloser
 
 	readDeadline  *time.Time
 	writeDeadline *time.Time
@@ -71,7 +71,7 @@ func (c *conn) Close() error {
 
 func (c *conn) close(err error) error {
 	c.once.Do(func() {
-		c.err = c.ReadWriteCloser.Close()
+		c.err = c.readWriteCloser.Close()
 		if c.err == nil {
 			c.err = err
 		}
@@ -82,7 +82,7 @@ func (c *conn) close(err error) error {
 func (c *conn) Read(b []byte) (int, error) {
 	d := (*time.Time)(atomic.LoadPointer((*unsafe.Pointer)(unsafe.Pointer(&c.writeDeadline))))
 	if d == nil {
-		return c.ReadWriteCloser.Read(b)
+		return c.readWriteCloser.Read(b)
 	}
 	timer := time.NewTimer(time.Until(*d))
 	defer timer.Stop()
@@ -91,7 +91,7 @@ func (c *conn) Read(b []byte) (int, error) {
 	var err error
 	done := make(chan struct{})
 	go func() {
-		n, err = c.ReadWriteCloser.Read(b)
+		n, err = c.readWriteCloser.Read(b)
 		close(done)
 	}()
 	select {
@@ -105,7 +105,7 @@ func (c *conn) Read(b []byte) (int, error) {
 func (c *conn) Write(b []byte) (int, error) {
 	d := (*time.Time)(atomic.LoadPointer((*unsafe.Pointer)(unsafe.Pointer(&c.writeDeadline))))
 	if d == nil {
-		return c.ReadWriteCloser.Write(b)
+		return c.readWriteCloser.Write(b)
 	}
 	timer := time.NewTimer(time.Until(*d))
 	defer timer.Stop()
@@ -114,7 +114,7 @@ func (c *conn) Write(b []byte) (int, error) {
 	var err error
 	done := make(chan struct{})
 	go func() {
-		n, err = c.ReadWriteCloser.Write(b)
+		n, err = c.readWriteCloser.Write(b)
 		close(done)
 	}()
 	select {
