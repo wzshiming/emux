@@ -79,7 +79,13 @@ func (l *ListenerSession) acceptSession(ctx context.Context, conn net.Conn) erro
 		if err != nil {
 			return err
 		}
-		l.conns <- newConn(stm, conn.LocalAddr(), conn.RemoteAddr())
+		conn := newConn(stm, conn.LocalAddr(), conn.RemoteAddr())
+		select {
+		case <-ctx.Done():
+			conn.Close()
+			return nil
+		case l.conns <- conn:
+		}
 	}
 	return nil
 }
@@ -87,7 +93,10 @@ func (l *ListenerSession) acceptSession(ctx context.Context, conn net.Conn) erro
 func (l *ListenerSession) Accept() (net.Conn, error) {
 	l.startOnce.Do(l.start)
 	select {
-	case conn := <-l.conns:
+	case conn, ok := <-l.conns:
+		if !ok {
+			return nil, ErrClosed
+		}
 		return conn, nil
 	case <-l.ctx.Done():
 		return nil, l.ctx.Err()
@@ -95,7 +104,11 @@ func (l *ListenerSession) Accept() (net.Conn, error) {
 }
 
 func (l *ListenerSession) Close() error {
+	if l.ctx.Err() != nil {
+		return nil
+	}
 	l.cancel()
+	close(l.conns)
 	return l.listener.Close()
 }
 
