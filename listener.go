@@ -28,7 +28,6 @@ func NewListener(ctx context.Context, listener net.Listener) *ListenerSession {
 		ctx:         ctx,
 		cancel:      cancel,
 		listener:    listener,
-		conns:       make(chan net.Conn),
 		Handshake:   DefaultServerHandshake,
 		Instruction: DefaultInstruction,
 		Timeout:     DefaultTimeout,
@@ -37,6 +36,7 @@ func NewListener(ctx context.Context, listener net.Listener) *ListenerSession {
 }
 
 func (l *ListenerSession) start() {
+	l.conns = make(chan net.Conn)
 	go l.run()
 }
 
@@ -50,54 +50,49 @@ func (l *ListenerSession) run() {
 			}
 			return
 		}
-		go func() {
-			if l.Handshake != nil {
-				err := l.Handshake.Handshake(l.ctx, conn)
-				if err != nil {
-					if l.Logger != nil {
-						l.Logger.Println("emux: listener: handshake:", "err", err)
-					}
-					conn.Close()
-					return
-				}
-			}
-			err = l.acceptSession(l.ctx, conn)
-			if err != nil {
-				if l.Logger != nil {
-					l.Logger.Println("emux: listener: accept session:", "err", err)
-				}
-			}
-		}()
+		go l.acceptSession(conn)
 	}
 }
 
-func (l *ListenerSession) acceptSession(ctx context.Context, conn net.Conn) error {
-	sess := NewServer(conn, &l.Instruction)
+func (l *ListenerSession) acceptSession(conn net.Conn) {
+	if l.Handshake != nil {
+		err := l.Handshake.Handshake(l.ctx, conn)
+		if err != nil {
+			if l.Logger != nil {
+				l.Logger.Println("emux: listener: handshake:", "err", err)
+			}
+			conn.Close()
+			return
+		}
+	}
+	sess := NewServer(l.ctx, conn, &l.Instruction)
 	sess.Logger = l.Logger
 	sess.BytesPool = l.BytesPool
 	sess.Timeout = l.Timeout
 	defer sess.Close()
 	for l.ctx.Err() == nil && !sess.IsClosed() {
-		stm, err := sess.Accept(ctx)
+		stm, err := sess.Accept()
 		if err != nil {
-			return err
+			if l.Logger != nil {
+				l.Logger.Println("emux: listener: accept session:", "err", err)
+			}
+			return
 		}
 		conn := newConn(stm, conn.LocalAddr(), conn.RemoteAddr())
 		select {
-		case <-ctx.Done():
+		case <-l.ctx.Done():
 			conn.Close()
-			return nil
+			return
 		case l.conns <- conn:
 		}
 	}
-	return nil
 }
 
 func (l *ListenerSession) Accept() (net.Conn, error) {
 	l.startOnce.Do(l.start)
 	select {
 	case <-l.ctx.Done():
-		return nil, l.ctx.Err()
+		return nil, ErrClosed
 	case conn, ok := <-l.conns:
 		if !ok {
 			return nil, ErrClosed
@@ -115,7 +110,9 @@ func (l *ListenerSession) Close() error {
 		return nil
 	}
 	l.cancel()
-	close(l.conns)
+	if l.conns != nil {
+		close(l.conns)
+	}
 	return l.listener.Close()
 }
 

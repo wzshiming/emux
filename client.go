@@ -8,15 +8,17 @@ import (
 )
 
 type Client struct {
+	ctx       context.Context
 	idPool    *idPool
 	onceStart sync.Once
 
 	*session
 }
 
-func NewClient(stm io.ReadWriteCloser, instruction *Instruction) *Client {
+func NewClient(ctx context.Context, stm io.ReadWriteCloser, instruction *Instruction) *Client {
 	return &Client{
-		session: newSession(stm, instruction),
+		ctx:     ctx,
+		session: newSession(stm, instruction, nil),
 	}
 }
 
@@ -25,7 +27,7 @@ func (c *Client) start() {
 	go c.handleLoop(nil, c.handleConnected)
 }
 
-func (c *Client) Dial(ctx context.Context) (io.ReadWriteCloser, error) {
+func (c *Client) Dial() (io.ReadWriteCloser, error) {
 	c.onceStart.Do(c.start)
 	if c.IsClosed() {
 		return nil, ErrClosed
@@ -34,7 +36,7 @@ func (c *Client) Dial(ctx context.Context) (io.ReadWriteCloser, error) {
 	if wc == nil {
 		return nil, fmt.Errorf("emux: no free stream id")
 	}
-	err := wc.connect(ctx)
+	err := wc.connect(c.ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -50,6 +52,9 @@ func (c *Client) dailStream() *stream {
 }
 
 func (c *Client) handleConnected(cmd uint8, sid uint64) error {
+	if c.IsClosed() {
+		return nil
+	}
 	stm := c.getStream(sid)
 	if stm == nil {
 		if c.Logger != nil {

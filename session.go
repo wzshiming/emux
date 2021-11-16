@@ -18,17 +18,14 @@ var (
 type session struct {
 	mut sync.RWMutex
 
-	closes []func()
-
 	sess map[uint64]*stream
 
-	decode    *Decode
-	encode    *Encode
-	writerMut sync.Mutex
-	closer    io.Closer
-
-	isClose uint32
-
+	decode      *Decode
+	encode      *Encode
+	writerMut   sync.Mutex
+	closer      io.Closer
+	cancel      func()
+	isClose     uint32
 	instruction *Instruction
 
 	Timeout   time.Duration
@@ -36,13 +33,14 @@ type session struct {
 	BytesPool BytesPool
 }
 
-func newSession(stm io.ReadWriteCloser, instruction *Instruction) *session {
+func newSession(stm io.ReadWriteCloser, instruction *Instruction, cancel func()) *session {
 	reader := readers.Get(stm)
 	writer := writers.Get(stm)
 	s := &session{
 		sess:        map[uint64]*stream{},
 		decode:      NewDecode(reader),
 		encode:      NewEncode(writer),
+		cancel:      cancel,
 		instruction: instruction,
 		closer:      stm,
 		Timeout:     DefaultTimeout,
@@ -70,23 +68,18 @@ func (s *session) Close() error {
 	if !atomic.CompareAndSwapUint32(&s.isClose, 0, 1) {
 		return nil
 	}
-
 	s.mut.Lock()
 	defer s.mut.Unlock()
 	s.writerMut.Lock()
 	defer s.writerMut.Unlock()
 
 	s.encode.WriteByte(s.instruction.Close)
+	s.closer.Close()
 	for _, stm := range s.sess {
 		stm.shutdown()
 	}
-	s.sess = nil
-	s.closer.Close()
-	if len(s.closes) != 0 {
-		for _, fn := range s.closes {
-			fn()
-		}
-		s.closes = nil
+	if s.cancel != nil {
+		s.cancel()
 	}
 	return nil
 }

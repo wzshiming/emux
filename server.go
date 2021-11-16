@@ -4,39 +4,56 @@ import (
 	"context"
 	"io"
 	"sync"
+	"sync/atomic"
 )
 
 type Server struct {
+	ctx        context.Context
+	cancel     func()
 	acceptChan chan *stream
 	onceStart  sync.Once
+	isClose    uint32
 
 	*session
 }
 
-func NewServer(stm io.ReadWriteCloser, instruction *Instruction) *Server {
+func NewServer(ctx context.Context, stm io.ReadWriteCloser, instruction *Instruction) *Server {
+	ctx, cancel := context.WithCancel(ctx)
 	return &Server{
-		session: newSession(stm, instruction),
+		ctx:     ctx,
+		cancel:  cancel,
+		session: newSession(stm, instruction, cancel),
 	}
+}
+
+func (s *Server) IsClosed() bool {
+	return s.session.IsClosed() || atomic.LoadUint32(&s.isClose) == 1
+}
+
+func (s *Server) Close() error {
+	if !atomic.CompareAndSwapUint32(&s.isClose, 0, 1) {
+		return nil
+	}
+	s.session.Close()
+	if s.acceptChan != nil {
+		close(s.acceptChan)
+	}
+	return nil
 }
 
 func (s *Server) start() {
 	s.acceptChan = make(chan *stream, 0)
-	s.closes = []func(){
-		func() {
-			close(s.acceptChan)
-		},
-	}
 	go s.handleLoop(s.handleConnect, nil)
 }
 
-func (s *Server) Accept(ctx context.Context) (io.ReadWriteCloser, error) {
+func (s *Server) Accept() (io.ReadWriteCloser, error) {
 	s.onceStart.Do(s.start)
 	if s.IsClosed() {
 		return nil, ErrClosed
 	}
 	select {
-	case <-ctx.Done():
-		return nil, ctx.Err()
+	case <-s.ctx.Done():
+		return nil, ErrClosed
 	case conn, ok := <-s.acceptChan:
 		if !ok {
 			return nil, ErrClosed
@@ -50,6 +67,9 @@ func (s *Server) acceptStream(sid uint64) *stream {
 }
 
 func (s *Server) handleConnect(cmd uint8, sid uint64) error {
+	if s.IsClosed() {
+		return nil
+	}
 	err := s.checkStream(sid)
 	if err != nil {
 		if s.Logger != nil {
@@ -63,8 +83,12 @@ func (s *Server) handleConnect(cmd uint8, sid uint64) error {
 		if s.Logger != nil {
 			s.Logger.Println("emux: connected", "cmd", cmd, "sid", sid, "err", err)
 		}
+		return err
+	}
+	select {
+	case <-s.ctx.Done():
+		return ErrClosed
+	case s.acceptChan <- stm:
 		return nil
 	}
-	s.acceptChan <- stm
-	return nil
 }

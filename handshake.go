@@ -56,7 +56,7 @@ func (h *handshake) Handshake(ctx context.Context, rw io.ReadWriter) error {
 	}()
 	select {
 	case <-ctx.Done():
-		return ctx.Err()
+		return ErrClosed
 	case <-done:
 		return err
 	}

@@ -66,7 +66,7 @@ func (c *conn) SetWriteDeadline(t time.Time) error {
 }
 
 func (c *conn) Close() error {
-	return c.close(nil)
+	return c.close(ErrClosed)
 }
 
 func (c *conn) close(err error) error {
@@ -80,6 +80,9 @@ func (c *conn) close(err error) error {
 }
 
 func (c *conn) Read(b []byte) (int, error) {
+	if c.err != nil {
+		return 0, c.err
+	}
 	d := (*time.Time)(atomic.LoadPointer((*unsafe.Pointer)(unsafe.Pointer(&c.writeDeadline))))
 	if d == nil {
 		return c.readWriteCloser.Read(b)
@@ -103,6 +106,9 @@ func (c *conn) Read(b []byte) (int, error) {
 }
 
 func (c *conn) Write(b []byte) (int, error) {
+	if c.err != nil {
+		return 0, c.err
+	}
 	d := (*time.Time)(atomic.LoadPointer((*unsafe.Pointer)(unsafe.Pointer(&c.writeDeadline))))
 	if d == nil {
 		return c.readWriteCloser.Write(b)

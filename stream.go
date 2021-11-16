@@ -43,19 +43,20 @@ func (s *stream) connect(ctx context.Context) error {
 		select {
 		case <-ctx.Done():
 			s.Close()
-			return ctx.Err()
+			return ErrClosed
 		case <-s.ready:
 			return nil
 		case <-s.close:
 			return ErrClosed
 		case <-timer.C:
+			s.Close()
 			return ErrTimeout
 		}
 	} else {
 		select {
 		case <-ctx.Done():
 			s.Close()
-			return ctx.Err()
+			return ErrClosed
 		case <-s.ready:
 			return nil
 		case <-s.close:

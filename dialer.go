@@ -51,7 +51,7 @@ func (d *DialerSession) dialContext(ctx context.Context, network, address string
 			}
 		}
 
-		sess := NewClient(conn, &d.Instruction)
+		sess := NewClient(ctx, conn, &d.Instruction)
 		sess.Logger = d.Logger
 		sess.BytesPool = d.BytesPool
 		sess.Timeout = d.Timeout
@@ -62,7 +62,7 @@ func (d *DialerSession) dialContext(ctx context.Context, network, address string
 		d.remoteAddr = conn.RemoteAddr()
 		d.sess = sess
 	}
-	stm, err := d.sess.Dial(ctx)
+	stm, err := d.sess.Dial()
 	if err != nil {
 		if d.sess != nil {
 			d.sess.Close()
