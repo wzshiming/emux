@@ -8,8 +8,6 @@ import (
 )
 
 type Server struct {
-	ctx        context.Context
-	cancel     func()
 	acceptChan chan *stream
 	onceStart  sync.Once
 	isClose    uint32
@@ -18,11 +16,8 @@ type Server struct {
 }
 
 func NewServer(ctx context.Context, stm io.ReadWriteCloser, instruction *Instruction) *Server {
-	ctx, cancel := context.WithCancel(ctx)
 	return &Server{
-		ctx:     ctx,
-		cancel:  cancel,
-		session: newSession(stm, instruction, cancel),
+		session: newSession(ctx, stm, instruction),
 	}
 }
 

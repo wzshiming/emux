@@ -8,7 +8,6 @@ import (
 )
 
 type Client struct {
-	ctx       context.Context
 	idPool    *idPool
 	onceStart sync.Once
 
@@ -17,8 +16,7 @@ type Client struct {
 
 func NewClient(ctx context.Context, stm io.ReadWriteCloser, instruction *Instruction) *Client {
 	return &Client{
-		ctx:     ctx,
-		session: newSession(stm, instruction, nil),
+		session: newSession(ctx, stm, instruction),
 	}
 }
 

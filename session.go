@@ -1,6 +1,7 @@
 package emux
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -16,6 +17,9 @@ var (
 )
 
 type session struct {
+	ctx    context.Context
+	cancel func()
+
 	mut sync.RWMutex
 
 	sess map[uint64]*stream
@@ -24,7 +28,6 @@ type session struct {
 	encode      *Encode
 	writerMut   sync.Mutex
 	closer      io.Closer
-	cancel      func()
 	isClose     uint32
 	instruction *Instruction
 
@@ -33,14 +36,16 @@ type session struct {
 	BytesPool BytesPool
 }
 
-func newSession(stm io.ReadWriteCloser, instruction *Instruction, cancel func()) *session {
+func newSession(ctx context.Context, stm io.ReadWriteCloser, instruction *Instruction) *session {
+	ctx, cancel := context.WithCancel(ctx)
 	reader := readers.Get(stm)
 	writer := writers.Get(stm)
 	s := &session{
+		ctx:         ctx,
+		cancel:      cancel,
 		sess:        map[uint64]*stream{},
 		decode:      NewDecode(reader),
 		encode:      NewEncode(writer),
-		cancel:      cancel,
 		instruction: instruction,
 		closer:      stm,
 		Timeout:     DefaultTimeout,
@@ -78,9 +83,7 @@ func (s *session) Close() error {
 	for _, stm := range s.sess {
 		stm.shutdown()
 	}
-	if s.cancel != nil {
-		s.cancel()
-	}
+	s.cancel()
 	return nil
 }
 
