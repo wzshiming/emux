@@ -20,6 +20,7 @@ var (
 	errShortRead            = fmt.Errorf("read length not equal to body length")
 	errStreamAlreadyExists  = fmt.Errorf("stream id already exists")
 	errNoData               = fmt.Errorf("data length cannot be zero")
+	errHeartbeatTimeout     = fmt.Errorf("heartbeat timeout")
 )
 
 type session struct {
@@ -36,6 +37,9 @@ type session struct {
 	stm         io.ReadWriteCloser
 	isClose     uint32
 	instruction *Instruction
+
+	heartbeatMut  sync.Mutex
+	lastHeartbeat time.Time
 
 	Timeout   time.Duration
 	Logger    Logger
@@ -199,8 +203,53 @@ func (s *session) handleData(cmd uint8, sid uint64, buf []byte) error {
 	return nil
 }
 
+func (s *session) heartbeatLoop() {
+	ticker := time.NewTicker(s.instruction.HeartbeatInterval)
+	defer func() {
+		ticker.Stop()
+		s.Close()
+	}()
+	s.lastHeartbeat = time.Now()
+	for !s.IsClosed() {
+		err := s.heartbeat()
+		if err != nil {
+			if s.Logger != nil {
+				s.Logger.Println("emux: heartbeatLoop:", "err", err)
+			}
+			return
+		}
+		select {
+		case <-ticker.C:
+		case <-s.ctx.Done():
+			return
+		}
+	}
+}
+
+func (s *session) heartbeat() error {
+	s.heartbeatMut.Lock()
+	defer s.heartbeatMut.Unlock()
+	since := time.Since(s.lastHeartbeat)
+	interval := s.instruction.HeartbeatInterval
+	if since > 2*interval {
+		return errHeartbeatTimeout
+	}
+	if since < interval {
+		return nil
+	}
+	s.writerMut.Lock()
+	defer s.writerMut.Unlock()
+	return s.encode.WriteByte(s.instruction.Ping)
+}
+
 func (s *session) handleLoop(connectFunc, connectedFunc func(cmd uint8, sid uint64) error) {
 	defer s.Close()
+
+	hasHeartbeat := s.instruction.HeartbeatInterval > 0
+	if hasHeartbeat {
+		go s.heartbeatLoop()
+	}
+
 	var buf []byte
 	if s.BytesPool != nil {
 		buf = s.BytesPool.Get()
@@ -216,9 +265,32 @@ func (s *session) handleLoop(connectFunc, connectedFunc func(cmd uint8, sid uint
 			}
 			return
 		}
+
+		// update last heartbeat time
+		if hasHeartbeat {
+			err = s.handlePong()
+			if err != nil {
+				if s.Logger != nil {
+					s.Logger.Println("emux: handleLoop:", "cmd", cmd, "err", err)
+				}
+				return
+			}
+		}
+
 		switch cmd {
 		case s.instruction.Close:
 			return
+		case s.instruction.Ping:
+			err = s.handlePing()
+			if err != nil {
+				if s.Logger != nil {
+					s.Logger.Println("emux: handleLoop:", "cmd", cmd, "err", err)
+				}
+				return
+			}
+			continue
+		case s.instruction.Pong:
+			continue
 		case s.instruction.Connect, s.instruction.Connected, s.instruction.Disconnect, s.instruction.Disconnected, s.instruction.Data:
 		default:
 			if s.Logger != nil {
@@ -272,4 +344,17 @@ func (s *session) handleLoop(connectFunc, connectedFunc func(cmd uint8, sid uint
 			}
 		}
 	}
+}
+
+func (s *session) handlePing() error {
+	s.writerMut.Lock()
+	defer s.writerMut.Unlock()
+	return s.encode.WriteByte(s.instruction.Pong)
+}
+
+func (s *session) handlePong() error {
+	s.heartbeatMut.Lock()
+	defer s.heartbeatMut.Unlock()
+	s.lastHeartbeat = time.Now()
+	return nil
 }
