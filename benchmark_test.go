@@ -117,7 +117,7 @@ var connCases = []func(b *testing.B) (string, Dialer, net.Listener){
 		if err != nil {
 			b.Fatal(err)
 		}
-		return "tcpHttpEmux", NewDialer(&net.Dialer{}), NewListener(context.Background(), t)
+		return "tcpHttpEmux", NewDialer(context.Background(), &net.Dialer{}), NewListener(context.Background(), t)
 	},
 	func(b *testing.B) (string, Dialer, net.Listener) {
 		l := newTestPipeServer()
@@ -125,7 +125,7 @@ var connCases = []func(b *testing.B) (string, Dialer, net.Listener){
 	},
 	func(b *testing.B) (string, Dialer, net.Listener) {
 		l := newTestPipeServer()
-		return "pipeHttpEmux", NewDialer(l), NewListener(context.Background(), l)
+		return "pipeHttpEmux", NewDialer(context.Background(), l), NewListener(context.Background(), l)
 	},
 }
 

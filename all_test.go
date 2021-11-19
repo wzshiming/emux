@@ -15,7 +15,7 @@ func TestEmux(t *testing.T) {
 		writer.WriteHeader(200)
 	}))
 
-	listenConfig := NewListenConfig(&net.ListenConfig{})
+	listenConfig := NewListenConfig(context.Background(), &net.ListenConfig{})
 	l, err := listenConfig.Listen(context.Background(), "tcp", ":0")
 	if err != nil {
 		t.Fatal(err)
@@ -24,7 +24,7 @@ func TestEmux(t *testing.T) {
 	svc.Listener = listener
 	svc.Start()
 
-	dialer := NewDialer(&net.Dialer{})
+	dialer := NewDialer(context.Background(), &net.Dialer{})
 
 	cli := svc.Client()
 	cli.Transport = &http.Transport{
@@ -53,7 +53,7 @@ func TestTimeout(t *testing.T) {
 	svc.Listener = listener
 	svc.Start()
 
-	dialer := NewDialer(&net.Dialer{})
+	dialer := NewDialer(context.Background(), &net.Dialer{})
 
 	cli := svc.Client()
 	cli.Transport = &http.Transport{

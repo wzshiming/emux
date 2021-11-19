@@ -8,6 +8,7 @@ import (
 )
 
 type ListenConfigSession struct {
+	ctx          context.Context
 	listenConfig ListenConfig
 	Logger       Logger
 	BytesPool    BytesPool
@@ -16,8 +17,9 @@ type ListenConfigSession struct {
 	Timeout      time.Duration
 }
 
-func NewListenConfig(listener ListenConfig) *ListenConfigSession {
+func NewListenConfig(ctx context.Context, listener ListenConfig) *ListenConfigSession {
 	return &ListenConfigSession{
+		ctx:          ctx,
 		listenConfig: listener,
 		Handshake:    DefaultServerHandshake,
 		Instruction:  DefaultInstruction,
@@ -33,7 +35,7 @@ func (l *ListenConfigSession) Listen(ctx context.Context, network, address strin
 	if err != nil {
 		return nil, err
 	}
-	lt := NewListener(ctx, listener)
+	lt := NewListener(l.ctx, listener)
 	lt.Logger = l.Logger
 	lt.BytesPool = l.BytesPool
 	lt.Handshake = l.Handshake

@@ -90,8 +90,12 @@ func (l *ListenerSession) acceptSession(conn net.Conn) {
 
 func (l *ListenerSession) Accept() (net.Conn, error) {
 	l.startOnce.Do(l.start)
+	if l.IsClosed() {
+		return nil, ErrClosed
+	}
 	select {
 	case <-l.ctx.Done():
+		close(l.conns)
 		return nil, ErrClosed
 	case conn, ok := <-l.conns:
 		if !ok {
@@ -110,9 +114,6 @@ func (l *ListenerSession) Close() error {
 		return nil
 	}
 	l.cancel()
-	if l.conns != nil {
-		close(l.conns)
-	}
 	return l.listener.Close()
 }
 

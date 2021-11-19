@@ -47,7 +47,7 @@ func (s *Server) acceptStream(sid uint64) *stream {
 
 func (s *Server) handleConnect(cmd uint8, sid uint64) error {
 	if s.IsClosed() {
-		return nil
+		return ErrClosed
 	}
 	err := s.checkStream(sid)
 	if err != nil {

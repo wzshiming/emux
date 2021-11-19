@@ -7,6 +7,7 @@ import (
 )
 
 type DialerSession struct {
+	ctx         context.Context
 	dialer      Dialer
 	localAddr   net.Addr
 	remoteAddr  net.Addr
@@ -19,8 +20,9 @@ type DialerSession struct {
 	Retry       int
 }
 
-func NewDialer(dialer Dialer) *DialerSession {
+func NewDialer(ctx context.Context, dialer Dialer) *DialerSession {
 	return &DialerSession{
+		ctx:         ctx,
 		dialer:      dialer,
 		Handshake:   DefaultClientHandshake,
 		Instruction: DefaultInstruction,
@@ -51,7 +53,7 @@ func (d *DialerSession) dialContext(ctx context.Context, network, address string
 			}
 		}
 
-		sess := NewClient(ctx, conn, &d.Instruction)
+		sess := NewClient(d.ctx, conn, &d.Instruction)
 		sess.Logger = d.Logger
 		sess.BytesPool = d.BytesPool
 		sess.Timeout = d.Timeout
@@ -62,13 +64,13 @@ func (d *DialerSession) dialContext(ctx context.Context, network, address string
 		d.remoteAddr = conn.RemoteAddr()
 		d.sess = sess
 	}
-	stm, err := d.sess.Dial()
+	stm, err := d.sess.Dial(ctx)
 	if err != nil {
 		if d.sess != nil {
 			d.sess.Close()
 			d.sess = nil
 		}
-		if retry <= 0 {
+		if retry <= 0 || d.ctx.Err() != nil || ctx.Err() != nil {
 			return nil, err
 		}
 		return d.dialContext(ctx, network, address, retry-1)

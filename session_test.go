@@ -66,11 +66,11 @@ func TestSession(t *testing.T) {
 			t.Fatal(err)
 		}
 		sess := NewClient(context.Background(), conn, &DefaultInstruction)
-		_, err = sess.Dial()
+		_, err = sess.Dial(context.Background())
 		if err != nil {
 			t.Fatal(err)
 		}
-		stm, err := sess.Dial()
+		stm, err := sess.Dial(context.Background())
 		if err != nil {
 			t.Fatal(err)
 		}

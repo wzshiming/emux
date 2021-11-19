@@ -25,7 +25,7 @@ func (c *Client) start() {
 	go c.handleLoop(nil, c.handleConnected)
 }
 
-func (c *Client) Dial() (io.ReadWriteCloser, error) {
+func (c *Client) Dial(ctx context.Context) (io.ReadWriteCloser, error) {
 	c.onceStart.Do(c.start)
 	if c.IsClosed() {
 		return nil, ErrClosed
@@ -34,7 +34,7 @@ func (c *Client) Dial() (io.ReadWriteCloser, error) {
 	if wc == nil {
 		return nil, fmt.Errorf("emux: no free stream id")
 	}
-	err := wc.connect(c.ctx)
+	err := wc.connect(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -51,7 +51,7 @@ func (c *Client) dailStream() *stream {
 
 func (c *Client) handleConnected(cmd uint8, sid uint64) error {
 	if c.IsClosed() {
-		return nil
+		return ErrClosed
 	}
 	stm := c.getStream(sid)
 	if stm == nil {
