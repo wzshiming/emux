@@ -4,13 +4,11 @@ import (
 	"context"
 	"io"
 	"sync"
-	"sync/atomic"
 )
 
 type Server struct {
 	acceptChan chan *stream
 	onceStart  sync.Once
-	isClose    uint32
 
 	*session
 }
@@ -19,21 +17,6 @@ func NewServer(ctx context.Context, stm io.ReadWriteCloser, instruction *Instruc
 	return &Server{
 		session: newSession(ctx, stm, instruction),
 	}
-}
-
-func (s *Server) IsClosed() bool {
-	return s.session.IsClosed() || atomic.LoadUint32(&s.isClose) == 1
-}
-
-func (s *Server) Close() error {
-	if !atomic.CompareAndSwapUint32(&s.isClose, 0, 1) {
-		return nil
-	}
-	s.session.Close()
-	if s.acceptChan != nil {
-		close(s.acceptChan)
-	}
-	return nil
 }
 
 func (s *Server) start() {
@@ -48,6 +31,7 @@ func (s *Server) Accept() (io.ReadWriteCloser, error) {
 	}
 	select {
 	case <-s.ctx.Done():
+		close(s.acceptChan)
 		return nil, ErrClosed
 	case conn, ok := <-s.acceptChan:
 		if !ok {
