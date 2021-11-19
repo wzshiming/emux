@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 func BenchmarkAll(b *testing.B) {
@@ -30,7 +31,8 @@ func BenchmarkAll(b *testing.B) {
 							DisableKeepAlives: alive,
 							DialContext:       dialer.DialContext,
 						}
-						b.Run(strings.Join([]string{serverName, aliveName, wayName, connName}, "-"), func(b *testing.B) {
+						name := strings.Join([]string{serverName, aliveName, wayName, connName}, "-")
+						b.Run(name, func(b *testing.B) {
 							way(b, cli, server)
 						})
 					}()
@@ -91,41 +93,49 @@ var serverCases = []func(b *testing.B) (string, *httptest.Server){
 		}))
 	},
 	func(b *testing.B) (string, *httptest.Server) {
-		return "stream", httptest.NewUnstartedServer(http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
-			io.Copy(rw, io.LimitReader(rand.Reader, 1024*1024))
+		return "body-1<<10", httptest.NewUnstartedServer(http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
+			io.Copy(rw, io.LimitReader(rand.Reader, 1<<10))
 		}))
 	},
 	func(b *testing.B) (string, *httptest.Server) {
-		return "packet", httptest.NewUnstartedServer(http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
-			io.Copy(rw, io.LimitReader(rand.Reader, 10))
+		return "body-1<<20", httptest.NewUnstartedServer(http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
+			io.Copy(rw, io.LimitReader(rand.Reader, 1<<20))
+		}))
+	},
+	func(b *testing.B) (string, *httptest.Server) {
+		return "body-1<<30", httptest.NewUnstartedServer(http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
+			io.Copy(rw, io.LimitReader(rand.Reader, 1<<30))
 		}))
 	},
 }
 
 var connCases = []func(b *testing.B) (string, Dialer, net.Listener){
 	func(b *testing.B) (string, Dialer, net.Listener) {
+		ctx, _ := context.WithTimeout(context.Background(), 10*time.Second)
 		l := &net.ListenConfig{}
-		t, err := l.Listen(context.Background(), "tcp", ":0")
+		t, err := l.Listen(ctx, "tcp", ":0")
 		if err != nil {
 			b.Fatal(err)
 		}
 		return "tcpHttp", &net.Dialer{}, t
 	},
 	func(b *testing.B) (string, Dialer, net.Listener) {
+		ctx, _ := context.WithTimeout(context.Background(), 10*time.Second)
 		l := &net.ListenConfig{}
-		t, err := l.Listen(context.Background(), "tcp", ":0")
+		t, err := l.Listen(ctx, "tcp", ":0")
 		if err != nil {
 			b.Fatal(err)
 		}
-		return "tcpHttpEmux", NewDialer(context.Background(), &net.Dialer{}), NewListener(context.Background(), t)
+		return "tcpHttpEmux", NewDialer(ctx, &net.Dialer{}), NewListener(ctx, t)
 	},
 	func(b *testing.B) (string, Dialer, net.Listener) {
 		l := newTestPipeServer()
 		return "pipeHttp", l, l
 	},
 	func(b *testing.B) (string, Dialer, net.Listener) {
+		ctx, _ := context.WithTimeout(context.Background(), 10*time.Second)
 		l := newTestPipeServer()
-		return "pipeHttpEmux", NewDialer(context.Background(), l), NewListener(context.Background(), l)
+		return "pipeHttpEmux", NewDialer(ctx, l), NewListener(ctx, l)
 	},
 }
 

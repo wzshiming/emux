@@ -11,20 +11,20 @@ type stream struct {
 	sess   *session
 	sid    uint64
 	writer *io.PipeWriter
-	*io.PipeReader
-	ready chan struct{}
-	close chan struct{}
-	once  sync.Once
+	reader *io.PipeReader
+	ready  chan struct{}
+	close  chan struct{}
+	once   sync.Once
 }
 
 func newStream(sess *session, sid uint64, cli bool) *stream {
 	r, w := io.Pipe()
 	s := &stream{
-		sess:       sess,
-		sid:        sid,
-		writer:     w,
-		PipeReader: r,
-		close:      make(chan struct{}),
+		sess:   sess,
+		sid:    sid,
+		writer: w,
+		reader: r,
+		close:  make(chan struct{}),
 	}
 	if cli {
 		s.ready = make(chan struct{})
@@ -33,6 +33,9 @@ func newStream(sess *session, sid uint64, cli bool) *stream {
 }
 
 func (s *stream) connect(ctx context.Context) error {
+	if s.isClose() {
+		return ErrClosed
+	}
 	err := s.exec(s.sess.instruction.Connect)
 	if err != nil {
 		return err
@@ -66,6 +69,9 @@ func (s *stream) connect(ctx context.Context) error {
 }
 
 func (s *stream) connected() error {
+	if s.isClose() {
+		return ErrClosed
+	}
 	return s.exec(s.sess.instruction.Connected)
 }
 
@@ -117,7 +123,7 @@ func (s *stream) Read(b []byte) (int, error) {
 	if s.isClose() {
 		return 0, ErrClosed
 	}
-	return s.PipeReader.Read(b)
+	return s.reader.Read(b)
 }
 
 func (s *stream) Write(b []byte) (int, error) {
@@ -158,9 +164,6 @@ func (s *stream) write(b []byte) error {
 }
 
 func (s *stream) exec(cmd uint8) error {
-	if s.isClose() {
-		return ErrClosed
-	}
 	s.sess.writerMut.Lock()
 	defer s.sess.writerMut.Unlock()
 	err := s.sess.encode.WriteCmd(cmd, s.sid)

@@ -2,7 +2,6 @@ package emux
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -121,13 +120,15 @@ func (s *session) getStream(sid uint64) *stream {
 	return s.sess[sid]
 }
 
-func (s *session) handleDisconnect(cmd uint8, sid uint64) {
+func (s *session) handleDisconnect(cmd uint8, sid uint64) error {
 	stm := s.getStream(sid)
 	if stm == nil {
 		if s.Logger != nil {
 			s.Logger.Println("emux: get stream", "cmd", cmd, "sid", sid, "err", "unknown stream id")
 		}
-		return
+		s.writerMut.Lock()
+		defer s.writerMut.Unlock()
+		return s.encode.WriteCmd(s.instruction.Disconnected, sid)
 	}
 
 	err := stm.disconnected()
@@ -135,36 +136,58 @@ func (s *session) handleDisconnect(cmd uint8, sid uint64) {
 		if s.Logger != nil {
 			s.Logger.Println("emux: disconnected stream error", "cmd", cmd, "sid", sid, "err", err)
 		}
-		return
+		return err
 	}
 	s.freeStream(sid)
-	return
+	return nil
 }
 
 func (s *session) handleData(cmd uint8, sid uint64, buf []byte) error {
+	i, err := s.decode.ReadUvarint()
+	if err == nil && i == 0 {
+		err = fmt.Errorf("data length cannot be zero")
+	}
+	if err != nil {
+		if s.Logger != nil {
+			s.Logger.Println("emux: read body length error", "cmd", cmd, "sid", sid, "err", err)
+		}
+		return err
+	}
+
+	r := limitReaders.Get(s.decode, int64(i))
+	defer limitReaders.Put(r)
 	stm := s.getStream(sid)
 	if stm == nil {
-		_, err := s.decode.WriteTo(io.Discard, buf)
+		n, err := io.CopyBuffer(io.Discard, r, buf)
 		if err != nil {
 			if s.Logger != nil {
 				s.Logger.Println("emux: write to discard error", "cmd", cmd, "sid", sid, "err", err)
 			}
+			return err
 		}
-		if errors.Is(err, ErrInvalidStream) {
+		if n != int64(i) {
+			err := fmt.Errorf("read length not equal to body length")
+			if s.Logger != nil {
+				s.Logger.Println("emux: read body length error", "cmd", cmd, "sid", sid, "err", err)
+			}
 			return err
 		}
 		return nil
 	}
 
-	_, err := s.decode.WriteTo(stm.writer, buf)
+	n, err := io.CopyBuffer(stm.writer, r, buf)
 	if err != nil {
 		if s.Logger != nil {
 			s.Logger.Println("emux: write to stream error", "cmd", cmd, "sid", sid, "err", err)
 		}
-		if errors.Is(err, ErrInvalidStream) {
-			return err
+		return err
+	}
+	if n != int64(i) {
+		err := fmt.Errorf("read length not equal to body length")
+		if s.Logger != nil {
+			s.Logger.Println("emux: read body length error", "cmd", cmd, "sid", sid, "err", err)
 		}
-		return nil
+		return err
 	}
 	return nil
 }
@@ -231,7 +254,10 @@ func (s *session) handleLoop(connectFunc, connectedFunc func(cmd uint8, sid uint
 			}
 		case s.instruction.Disconnect,
 			s.instruction.Disconnected: // when both ends are closed at the same time, CmdDisconnect needs to be treated as CmdDisconnected
-			s.handleDisconnect(cmd, sid)
+			err := s.handleDisconnect(cmd, sid)
+			if err != nil {
+				return
+			}
 		case s.instruction.Data:
 			err := s.handleData(cmd, sid, buf)
 			if err != nil {

@@ -2,12 +2,7 @@ package emux
 
 import (
 	"encoding/binary"
-	"fmt"
 	"io"
-)
-
-var (
-	ErrInvalidStream = fmt.Errorf("invalid stream")
 )
 
 type DecodeReader interface {
@@ -21,6 +16,7 @@ type EncodeWriter interface {
 }
 
 type Encode struct {
+	buf [binary.MaxVarintLen64 + 1]byte
 	EncodeWriter
 }
 
@@ -31,9 +27,8 @@ func NewEncode(w EncodeWriter) *Encode {
 }
 
 func (e *Encode) WriteUvarint(v uint64) error {
-	var buf [binary.MaxVarintLen64]byte
-	n := binary.PutUvarint(buf[:], v)
-	_, err := e.EncodeWriter.Write(buf[:n])
+	n := binary.PutUvarint(e.buf[:], v)
+	_, err := e.EncodeWriter.Write(e.buf[:n])
 	return err
 }
 
@@ -49,16 +44,15 @@ func (e *Encode) WriteBytes(b []byte) error {
 }
 
 func (e *Encode) WriteByte(b byte) error {
-	var buf = [...]byte{b}
-	_, err := e.EncodeWriter.Write(buf[:])
+	e.buf[0] = b
+	_, err := e.EncodeWriter.Write(e.buf[:1])
 	return err
 }
 
 func (e *Encode) WriteCmd(cmd uint8, sid uint64) error {
-	var buf [binary.MaxVarintLen64 + 1]byte
-	buf[0] = cmd
-	n := binary.PutUvarint(buf[1:], sid)
-	_, err := e.EncodeWriter.Write(buf[:n+1])
+	e.buf[0] = cmd
+	n := binary.PutUvarint(e.buf[1:], sid)
+	_, err := e.EncodeWriter.Write(e.buf[:n+1])
 	return err
 }
 
@@ -92,39 +86,7 @@ func (d *Decode) ReadBytes() ([]byte, error) {
 func (d *Decode) WriteTo(w io.Writer, buf []byte) (int64, error) {
 	i, err := d.ReadUvarint()
 	if err != nil {
-		return 0, fmt.Errorf("read uvarint: %w: %s", ErrInvalidStream, err)
+		return 0, err
 	}
-
-	n, err := io.CopyBuffer(w, io.LimitReader(d.DecodeReader, int64(i)), buf)
-	if err != nil {
-		if l := int64(i) - n; l > 0 && w != io.Discard {
-			k, err0 := io.CopyBuffer(io.Discard, io.LimitReader(d.DecodeReader, l), buf)
-			if err0 != nil {
-				if k != l {
-					err = fmt.Errorf("%s: %w: %s", err, ErrInvalidStream, err0)
-				} else {
-					err = fmt.Errorf("%w: %s", err, err0)
-				}
-			} else {
-				if k != l {
-					err = fmt.Errorf("%s: %w", err, ErrInvalidStream)
-				}
-			}
-		}
-		return int64(i), err
-	}
-	if l := int64(i) - n; l > 0 {
-		if w != io.Discard {
-			k, err := io.CopyBuffer(io.Discard, io.LimitReader(d.DecodeReader, l), buf)
-			if err != nil {
-				if k != l {
-					err = fmt.Errorf("%w: %s", ErrInvalidStream, err)
-				}
-				return int64(i), err
-			}
-		} else {
-			return int64(i), fmt.Errorf("emux: %w", ErrInvalidStream)
-		}
-	}
-	return int64(i), nil
+	return io.CopyBuffer(w, io.LimitReader(d.DecodeReader, int64(i)), buf)
 }
