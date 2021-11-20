@@ -2,6 +2,7 @@ package emux
 
 import (
 	"context"
+	"io"
 	"net"
 	"sync"
 	"sync/atomic"
@@ -12,7 +13,7 @@ type ListenerSession struct {
 	ctx         context.Context
 	cancel      func()
 	listener    net.Listener
-	conns       chan net.Conn
+	acceptChan  chan io.ReadWriteCloser
 	startOnce   sync.Once
 	isClose     uint32
 	BytesPool   BytesPool
@@ -36,7 +37,7 @@ func NewListener(ctx context.Context, listener net.Listener) *ListenerSession {
 }
 
 func (l *ListenerSession) start() {
-	l.conns = make(chan net.Conn)
+	l.acceptChan = make(chan io.ReadWriteCloser, 0)
 	go l.run()
 }
 
@@ -69,21 +70,10 @@ func (l *ListenerSession) acceptSession(conn net.Conn) {
 	sess.Logger = l.Logger
 	sess.BytesPool = l.BytesPool
 	sess.Timeout = l.Timeout
-	defer sess.Close()
-	for l.ctx.Err() == nil && !sess.IsClosed() {
-		stm, err := sess.Accept()
-		if err != nil {
-			if l.Logger != nil {
-				l.Logger.Println("emux: listener: accept session:", "err", err)
-			}
-			return
-		}
-		conn := newConn(stm, conn.LocalAddr(), conn.RemoteAddr())
-		select {
-		case <-l.ctx.Done():
-			conn.Close()
-			return
-		case l.conns <- conn:
+	err := sess.AcceptTo(l.acceptChan)
+	if err != nil {
+		if l.Logger != nil {
+			l.Logger.Println("emux: listener: accept:", "err", err)
 		}
 	}
 }
@@ -95,13 +85,24 @@ func (l *ListenerSession) Accept() (net.Conn, error) {
 	}
 	select {
 	case <-l.ctx.Done():
-		close(l.conns)
+		close(l.acceptChan)
 		return nil, ErrClosed
-	case conn, ok := <-l.conns:
+	case stm, ok := <-l.acceptChan:
 		if !ok {
 			return nil, ErrClosed
 		}
-		return conn, nil
+		istm, ok := stm.(interface{ OriginStream() io.ReadWriteCloser })
+		if !ok {
+			stm.Close()
+			return l.Accept()
+		}
+		ostm := istm.OriginStream()
+		conn, ok := ostm.(net.Conn)
+		if !ok {
+			stm.Close()
+			return l.Accept()
+		}
+		return newConn(stm, conn.LocalAddr(), conn.RemoteAddr()), nil
 	}
 }
 

@@ -75,6 +75,10 @@ func (s *stream) connected() error {
 	return s.exec(s.sess.instruction.Connected)
 }
 
+func (s *stream) OriginStream() io.ReadWriteCloser {
+	return s.sess.stm
+}
+
 func (s *stream) Close() error {
 	if s.isClose() {
 		return nil

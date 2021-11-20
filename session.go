@@ -12,7 +12,8 @@ import (
 )
 
 var (
-	ErrClosed = net.ErrClosed
+	ErrClosed         = net.ErrClosed
+	ErrAlreadyStarted = fmt.Errorf("session already started")
 )
 
 type session struct {
@@ -26,7 +27,7 @@ type session struct {
 	decode      *Decode
 	encode      *Encode
 	writerMut   sync.Mutex
-	closer      io.Closer
+	stm         io.ReadWriteCloser
 	isClose     uint32
 	instruction *Instruction
 
@@ -46,7 +47,7 @@ func newSession(ctx context.Context, stm io.ReadWriteCloser, instruction *Instru
 		decode:      NewDecode(reader),
 		encode:      NewEncode(writer),
 		instruction: instruction,
-		closer:      stm,
+		stm:         stm,
 		Timeout:     DefaultTimeout,
 	}
 
@@ -78,7 +79,7 @@ func (s *session) Close() error {
 	defer s.writerMut.Unlock()
 
 	s.encode.WriteByte(s.instruction.Close)
-	s.closer.Close()
+	s.stm.Close()
 	for _, stm := range s.sess {
 		stm.shutdown()
 	}

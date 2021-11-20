@@ -7,7 +7,7 @@ import (
 )
 
 type Server struct {
-	acceptChan chan *stream
+	acceptChan chan io.ReadWriteCloser
 	onceStart  sync.Once
 
 	*session
@@ -20,7 +20,9 @@ func NewServer(ctx context.Context, stm io.ReadWriteCloser, instruction *Instruc
 }
 
 func (s *Server) start() {
-	s.acceptChan = make(chan *stream, 0)
+	if s.acceptChan == nil {
+		s.acceptChan = make(chan io.ReadWriteCloser, 0)
+	}
 	go s.handleLoop(s.handleConnect, nil)
 }
 
@@ -39,6 +41,15 @@ func (s *Server) Accept() (io.ReadWriteCloser, error) {
 		}
 		return conn, nil
 	}
+}
+
+func (s *Server) AcceptTo(acceptChan chan io.ReadWriteCloser) error {
+	if s.acceptChan != nil {
+		return ErrAlreadyStarted
+	}
+	s.acceptChan = acceptChan
+	s.onceStart.Do(s.start)
+	return nil
 }
 
 func (s *Server) acceptStream(sid uint64) *stream {
