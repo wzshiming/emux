@@ -53,7 +53,7 @@ func (s *Server) AcceptTo(acceptChan chan io.ReadWriteCloser) error {
 }
 
 func (s *Server) acceptStream(sid uint64) *stream {
-	return s.newStream(sid, false)
+	return s.newStream(sid, nil, false)
 }
 
 func (s *Server) handleConnect(cmd uint8, sid uint64) error {

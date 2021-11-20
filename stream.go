@@ -10,6 +10,7 @@ import (
 type stream struct {
 	sess   *session
 	sid    uint64
+	idPool *idPool
 	writer *io.PipeWriter
 	reader *io.PipeReader
 	ready  chan struct{}
@@ -17,11 +18,12 @@ type stream struct {
 	once   sync.Once
 }
 
-func newStream(sess *session, sid uint64, cli bool) *stream {
+func newStream(sess *session, sid uint64, idPool *idPool, cli bool) *stream {
 	r, w := io.Pipe()
 	s := &stream{
 		sess:   sess,
 		sid:    sid,
+		idPool: idPool,
 		writer: w,
 		reader: r,
 		close:  make(chan struct{}),
@@ -104,10 +106,17 @@ func (s *stream) isReady() bool {
 	}
 }
 
+func (s *stream) shut() {
+	close(s.close)
+	s.writer.Close()
+	if s.idPool != nil {
+		s.idPool.Put(s.sid)
+	}
+}
+
 func (s *stream) shutdown() {
 	s.once.Do(func() {
-		close(s.close)
-		s.writer.Close()
+		s.shut()
 	})
 	return
 }
@@ -116,8 +125,7 @@ func (s *stream) disconnect() error {
 	var err error
 	s.once.Do(func() {
 		err = s.exec(s.sess.instruction.Disconnect)
-		close(s.close)
-		s.writer.Close()
+		s.shut()
 	})
 	return err
 }
@@ -126,8 +134,7 @@ func (s *stream) disconnected() error {
 	var err error
 	s.once.Do(func() {
 		err = s.exec(s.sess.instruction.Disconnected)
-		close(s.close)
-		s.writer.Close()
+		s.shut()
 	})
 	return err
 }

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"runtime"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -55,6 +56,18 @@ func newSession(ctx context.Context, stm io.ReadWriteCloser, instruction *Instru
 		stm:         stm,
 		Timeout:     DefaultTimeout,
 	}
+
+	// recycling the reader and writer when all the streams are closed
+	if stm != reader.(interface{}) || stm != writer.(interface{}) {
+		runtime.SetFinalizer(s, func(s *session) {
+			if stm != reader.(interface{}) {
+				readers.Put(s.decode.DecodeReader)
+			}
+			if stm != writer.(interface{}) {
+				writers.Put(s.encode.EncodeWriter)
+			}
+		})
+	}
 	return s
 }
 
@@ -77,16 +90,13 @@ func (s *session) Close() error {
 	for _, stm := range s.sess {
 		stm.shutdown()
 	}
-
-	readers.Put(s.decode.DecodeReader)
-	writers.Put(s.encode.EncodeWriter)
 	return nil
 }
 
-func (s *session) newStream(sid uint64, cli bool) *stream {
+func (s *session) newStream(sid uint64, idPool *idPool, cli bool) *stream {
 	s.mut.Lock()
 	defer s.mut.Unlock()
-	stm := newStream(s, sid, cli)
+	stm := newStream(s, sid, idPool, cli)
 	s.sess[sid] = stm
 	return stm
 }

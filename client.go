@@ -45,7 +45,7 @@ func (c *Client) dailStream() *stream {
 	if sid == 0 {
 		return nil
 	}
-	return c.newStream(sid, true)
+	return c.newStream(sid, c.idPool, true)
 }
 
 func (c *Client) handleConnected(cmd uint8, sid uint64) error {

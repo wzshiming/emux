@@ -30,7 +30,7 @@ func (s *idPool) Get() uint64 {
 	defer s.mut.Unlock()
 
 	// less than 0x80 , that StreamID is takes only one byte
-	if s.index >= 0x80 {
+	if s.index < 0x80 {
 		s.index++
 		return s.index
 	}
