@@ -2,7 +2,6 @@ package emux
 
 import (
 	"context"
-	"fmt"
 	"io"
 	"sync"
 )
@@ -32,7 +31,7 @@ func (c *Client) Dial(ctx context.Context) (io.ReadWriteCloser, error) {
 	}
 	wc := c.dailStream()
 	if wc == nil {
-		return nil, fmt.Errorf("emux: no free stream id")
+		return nil, errNoFreeStreamID
 	}
 	err := wc.connect(ctx)
 	if err != nil {
@@ -55,10 +54,18 @@ func (c *Client) handleConnected(cmd uint8, sid uint64) error {
 	}
 	stm := c.getStream(sid)
 	if stm == nil {
+		err := errUnknownStreamID
 		if c.Logger != nil {
-			c.Logger.Println("emux: get stream", "cmd", cmd, "sid", sid, "err", "unknown stream id")
+			c.Logger.Println("emux: get stream", "cmd", cmd, "sid", sid, "err", err)
 		}
-		return nil
+		return err
+	}
+	if stm.isReady() {
+		err := errStreamIsAlreadyReady
+		if c.Logger != nil {
+			c.Logger.Println("emux: ready", "cmd", cmd, "sid", sid, "err", err)
+		}
+		return err
 	}
 	close(stm.ready)
 	return nil

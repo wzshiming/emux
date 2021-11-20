@@ -65,7 +65,7 @@ func (s *Server) handleConnect(cmd uint8, sid uint64) error {
 		if s.Logger != nil {
 			s.Logger.Println("emux: check stream", "cmd", cmd, "sid", sid, "err", err)
 		}
-		return nil
+		return err
 	}
 	stm := s.acceptStream(sid)
 	err = stm.connected()
@@ -77,6 +77,7 @@ func (s *Server) handleConnect(cmd uint8, sid uint64) error {
 	}
 	select {
 	case <-s.ctx.Done():
+		stm.Close()
 		return ErrClosed
 	case s.acceptChan <- stm:
 		return nil

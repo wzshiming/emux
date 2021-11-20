@@ -95,6 +95,15 @@ func (s *stream) isClose() bool {
 	}
 }
 
+func (s *stream) isReady() bool {
+	select {
+	case <-s.ready:
+		return true
+	default:
+		return false
+	}
+}
+
 func (s *stream) shutdown() {
 	s.once.Do(func() {
 		close(s.close)

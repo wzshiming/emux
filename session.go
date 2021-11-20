@@ -11,8 +11,14 @@ import (
 )
 
 var (
-	ErrClosed         = net.ErrClosed
-	ErrAlreadyStarted = fmt.Errorf("session already started")
+	ErrClosed               = net.ErrClosed
+	ErrAlreadyStarted       = fmt.Errorf("session already started")
+	errUnknownStreamID      = fmt.Errorf("unknown stream id")
+	errStreamIsAlreadyReady = fmt.Errorf("stream is already ready")
+	errNoFreeStreamID       = fmt.Errorf("emux: no free stream id")
+	errShortRead            = fmt.Errorf("read length not equal to body length")
+	errStreamAlreadyExists  = fmt.Errorf("stream id already exists")
+	errNoData               = fmt.Errorf("data length cannot be zero")
 )
 
 type session struct {
@@ -90,7 +96,7 @@ func (s *session) checkStream(sid uint64) error {
 	defer s.mut.RUnlock()
 	stm := s.sess[sid]
 	if stm != nil {
-		return fmt.Errorf("stream %d already exists", sid)
+		return errStreamAlreadyExists
 	}
 	return nil
 }
@@ -115,7 +121,7 @@ func (s *session) handleDisconnect(cmd uint8, sid uint64) error {
 	stm := s.getStream(sid)
 	if stm == nil {
 		if s.Logger != nil {
-			s.Logger.Println("emux: get stream", "cmd", cmd, "sid", sid, "err", "unknown stream id")
+			s.Logger.Println("emux: get stream", "cmd", cmd, "sid", sid, "err", errUnknownStreamID)
 		}
 		s.writerMut.Lock()
 		defer s.writerMut.Unlock()
@@ -136,7 +142,7 @@ func (s *session) handleDisconnect(cmd uint8, sid uint64) error {
 func (s *session) handleData(cmd uint8, sid uint64, buf []byte) error {
 	i, err := s.decode.ReadUvarint()
 	if err == nil && i == 0 {
-		err = fmt.Errorf("data length cannot be zero")
+		err = errNoData
 	}
 	if err != nil {
 		if s.Logger != nil {
@@ -157,7 +163,7 @@ func (s *session) handleData(cmd uint8, sid uint64, buf []byte) error {
 			return err
 		}
 		if n != int64(i) {
-			err := fmt.Errorf("read length not equal to body length")
+			err = errShortRead
 			if s.Logger != nil {
 				s.Logger.Println("emux: read body length error", "cmd", cmd, "sid", sid, "err", err)
 			}
@@ -174,7 +180,7 @@ func (s *session) handleData(cmd uint8, sid uint64, buf []byte) error {
 		return err
 	}
 	if n != int64(i) {
-		err := fmt.Errorf("read length not equal to body length")
+		err = errShortRead
 		if s.Logger != nil {
 			s.Logger.Println("emux: read body length error", "cmd", cmd, "sid", sid, "err", err)
 		}
