@@ -18,7 +18,7 @@ var (
 	HandshakeData          = []byte("EMUX ")
 	DefaultClientHandshake = NewHandshake(HandshakeData, true)
 	DefaultServerHandshake = NewHandshake(HandshakeData, false)
-	DefaultTimeout         = 10 * time.Second
+	DefaultTimeout         = 30 * time.Second
 )
 
 type Handshake interface {

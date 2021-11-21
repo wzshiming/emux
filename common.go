@@ -3,6 +3,7 @@ package emux
 import (
 	"context"
 	"net"
+	"time"
 )
 
 const (
@@ -28,4 +29,8 @@ type Logger interface {
 type BytesPool interface {
 	Get() []byte
 	Put([]byte)
+}
+
+type deadline interface {
+	SetDeadline(t time.Time) error
 }

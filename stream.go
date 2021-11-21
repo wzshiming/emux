@@ -172,6 +172,9 @@ func (s *stream) write(b []byte) error {
 	}
 	s.sess.writerMut.Lock()
 	defer s.sess.writerMut.Unlock()
+	if s.sess.encode == nil {
+		return ErrClosed
+	}
 	err := s.sess.encode.WriteCmd(s.sess.instruction.Data, s.sid)
 	if err != nil {
 		return err
@@ -184,11 +187,5 @@ func (s *stream) write(b []byte) error {
 }
 
 func (s *stream) exec(cmd uint8) error {
-	s.sess.writerMut.Lock()
-	defer s.sess.writerMut.Unlock()
-	err := s.sess.encode.WriteCmd(cmd, s.sid)
-	if err != nil {
-		return err
-	}
-	return s.sess.encode.Flush()
+	return s.sess.exec(cmd, s.sid)
 }
