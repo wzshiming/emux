@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"net"
-	"runtime"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -44,29 +43,13 @@ type session struct {
 
 func newSession(ctx context.Context, stm io.ReadWriteCloser, instruction *Instruction) *session {
 	ctx, cancel := context.WithCancel(ctx)
-	reader := readers.Get(stm)
-	writer := writers.Get(stm)
 	s := &session{
 		ctx:         ctx,
 		cancel:      cancel,
 		sess:        map[uint64]*stream{},
-		decode:      NewDecode(reader),
-		encode:      NewEncode(writer),
 		instruction: instruction,
 		stm:         stm,
 		Timeout:     DefaultTimeout,
-	}
-
-	// recycling the reader and writer when all the streams are closed
-	if stm != reader.(interface{}) || stm != writer.(interface{}) {
-		runtime.SetFinalizer(s, func(s *session) {
-			if stm != reader.(interface{}) {
-				readers.Put(s.decode.DecodeReader)
-			}
-			if stm != writer.(interface{}) {
-				writers.Put(s.encode.EncodeWriter)
-			}
-		})
 	}
 	return s
 }
@@ -79,12 +62,10 @@ func (s *session) Close() error {
 	if !atomic.CompareAndSwapUint32(&s.isClose, 0, 1) {
 		return nil
 	}
+
 	s.mut.Lock()
 	defer s.mut.Unlock()
-	s.writerMut.Lock()
-	defer s.writerMut.Unlock()
-
-	s.encode.WriteByte(s.instruction.Close)
+	s.writeByte(s.instruction.Close)
 	s.stm.Close()
 	s.cancel()
 	for _, stm := range s.sess {
@@ -133,9 +114,7 @@ func (s *session) handleDisconnect(cmd uint8, sid uint64) error {
 		if s.Logger != nil {
 			s.Logger.Println("emux: get stream", "cmd", cmd, "sid", sid, "err", errUnknownStreamID)
 		}
-		s.writerMut.Lock()
-		defer s.writerMut.Unlock()
-		return s.encode.WriteCmd(s.instruction.Disconnected, sid)
+		return s.exec(s.instruction.Disconnected, sid)
 	}
 
 	err := stm.disconnected()
@@ -200,7 +179,17 @@ func (s *session) handleData(cmd uint8, sid uint64, buf []byte) error {
 }
 
 func (s *session) handleLoop(connectFunc, connectedFunc func(cmd uint8, sid uint64) error) {
-	defer s.Close()
+	s.decode = NewDecode(readers.Get(s.stm))
+	s.encode = NewEncode(writers.Get(s.stm))
+	defer func() {
+		s.Close()
+		readers.Put(s.decode.DecodeReader)
+		s.decode = nil
+		s.writerMut.Lock()
+		defer s.writerMut.Unlock()
+		writers.Put(s.encode.EncodeWriter)
+		s.encode = nil
+	}()
 	var buf []byte
 	if s.BytesPool != nil {
 		buf = s.BytesPool.Get()
@@ -209,6 +198,7 @@ func (s *session) handleLoop(connectFunc, connectedFunc func(cmd uint8, sid uint
 		buf = make([]byte, bufSize)
 	}
 	for !s.IsClosed() {
+		s.updateTimeout()
 		cmd, err := s.decode.ReadByte()
 		if err != nil {
 			if s.Logger != nil {
@@ -270,6 +260,63 @@ func (s *session) handleLoop(connectFunc, connectedFunc func(cmd uint8, sid uint
 			if err != nil {
 				return
 			}
+		}
+	}
+}
+
+func (s *session) writeByte(b uint8) error {
+	s.writerMut.Lock()
+	defer s.writerMut.Unlock()
+	if s.encode == nil {
+		return ErrClosed
+	}
+	err := s.encode.WriteByte(b)
+	if err != nil {
+		return err
+	}
+
+	s.updateTimeout()
+	return s.encode.Flush()
+}
+
+func (s *session) exec(cmd uint8, sid uint64) error {
+	s.writerMut.Lock()
+	defer s.writerMut.Unlock()
+	if s.encode == nil {
+		return ErrClosed
+	}
+	err := s.encode.WriteCmd(cmd, sid)
+	if err != nil {
+		return err
+	}
+
+	s.updateTimeout()
+	return s.encode.Flush()
+}
+
+func (s *session) write(cmd uint8, sid uint64, b []byte) error {
+	s.writerMut.Lock()
+	defer s.writerMut.Unlock()
+	if s.encode == nil {
+		return ErrClosed
+	}
+	err := s.encode.WriteCmd(cmd, sid)
+	if err != nil {
+		return err
+	}
+	err = s.encode.WriteBytes(b)
+	if err != nil {
+		return err
+	}
+
+	s.updateTimeout()
+	return s.encode.Flush()
+}
+
+func (s *session) updateTimeout() {
+	if s.Timeout > 0 {
+		if t, ok := s.stm.(deadline); ok {
+			t.SetDeadline(time.Now().Add(s.Timeout))
 		}
 	}
 }
