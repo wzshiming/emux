@@ -38,7 +38,7 @@ func (s *stream) connect(ctx context.Context) error {
 	if s.isClose() {
 		return ErrClosed
 	}
-	err := s.exec(s.sess.instruction.Connect)
+	err := s.sess.execConnect(s.sid)
 	if err != nil {
 		return err
 	}
@@ -74,7 +74,7 @@ func (s *stream) connected() error {
 	if s.isClose() {
 		return ErrClosed
 	}
-	return s.exec(s.sess.instruction.Connected)
+	return s.sess.execConnected(s.sid)
 }
 
 func (s *stream) OriginStream() io.ReadWriteCloser {
@@ -124,7 +124,7 @@ func (s *stream) shutdown() {
 func (s *stream) disconnect() error {
 	var err error
 	s.once.Do(func() {
-		err = s.exec(s.sess.instruction.Disconnect)
+		err = s.sess.execDisconnect(s.sid)
 		s.shut()
 	})
 	return err
@@ -133,7 +133,7 @@ func (s *stream) disconnect() error {
 func (s *stream) disconnected() error {
 	var err error
 	s.once.Do(func() {
-		err = s.exec(s.sess.instruction.Disconnected)
+		err = s.sess.execDisconnected(s.sid)
 		s.shut()
 	})
 	return err
@@ -153,42 +153,18 @@ func (s *stream) Write(b []byte) (int, error) {
 	l := len(b)
 	maxDataPacketSize := s.sess.instruction.MaxDataPacketSize
 	for uint64(len(b)) > maxDataPacketSize {
-		err := s.write(b[:maxDataPacketSize])
+		err := s.sess.writeData(s.sid, b[:maxDataPacketSize])
 		if err != nil {
 			return 0, err
 		}
 		b = b[maxDataPacketSize:]
+		if s.isClose() {
+			return 0, ErrClosed
+		}
 	}
-	err := s.write(b)
+	err := s.sess.writeData(s.sid, b)
 	if err != nil {
 		return 0, err
 	}
 	return l, nil
-}
-
-func (s *stream) write(b []byte) error {
-	if s.isClose() {
-		return ErrClosed
-	}
-	s.sess.writerMut.Lock()
-	defer s.sess.writerMut.Unlock()
-	err := s.sess.encode.WriteCmd(s.sess.instruction.Data, s.sid)
-	if err != nil {
-		return err
-	}
-	err = s.sess.encode.WriteBytes(b)
-	if err != nil {
-		return err
-	}
-	return s.sess.encode.Flush()
-}
-
-func (s *stream) exec(cmd uint8) error {
-	s.sess.writerMut.Lock()
-	defer s.sess.writerMut.Unlock()
-	err := s.sess.encode.WriteCmd(cmd, s.sid)
-	if err != nil {
-		return err
-	}
-	return s.sess.encode.Flush()
 }

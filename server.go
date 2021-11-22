@@ -23,6 +23,7 @@ func (s *Server) start() {
 	if s.acceptChan == nil {
 		s.acceptChan = make(chan io.ReadWriteCloser, 0)
 	}
+	s.init()
 	go s.handleLoop(s.handleConnect, nil)
 }
 

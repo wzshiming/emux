@@ -21,6 +21,7 @@ func NewClient(ctx context.Context, stm io.ReadWriteCloser, instruction *Instruc
 
 func (c *Client) start() {
 	c.idPool = newIDPool()
+	c.init()
 	go c.handleLoop(nil, c.handleConnected)
 }
 
