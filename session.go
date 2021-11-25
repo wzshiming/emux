@@ -35,6 +35,7 @@ type session struct {
 	stm         io.ReadWriteCloser
 	isClose     uint32
 	instruction *Instruction
+	lastTime    time.Time
 
 	Timeout   time.Duration
 	Logger    Logger
@@ -335,7 +336,12 @@ func (s *session) writeData(sid uint64, b []byte) error {
 func (s *session) updateTimeout() {
 	if s.Timeout > 0 {
 		if t, ok := s.stm.(deadline); ok {
-			t.SetDeadline(time.Now().Add(s.Timeout))
+			if time.Since(s.lastTime) < s.Timeout/2 {
+				return
+			}
+			now := time.Now()
+			s.lastTime = now
+			t.SetDeadline(now.Add(s.Timeout))
 		}
 	}
 }
