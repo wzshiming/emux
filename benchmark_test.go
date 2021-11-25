@@ -2,11 +2,11 @@ package emux
 
 import (
 	"context"
-	"crypto/rand"
 	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -53,7 +53,17 @@ var wayCases = []func(b *testing.B) (string, func(b *testing.B, cli *http.Client
 				if resp.StatusCode != 200 {
 					b.Fatal("expected 200, got", resp.StatusCode)
 				}
-				io.Copy(io.Discard, resp.Body)
+				l, err := strconv.ParseInt(resp.Header.Get("Content-Length"), 10, 64)
+				if err != nil {
+					b.Fatal(err)
+				}
+				n, err := io.Copy(io.Discard, resp.Body)
+				if err != nil {
+					b.Fatal(err)
+				}
+				if l != n {
+					b.Fatal("expected body length", l, "got", n)
+				}
 				resp.Body.Close()
 			}
 		}
@@ -69,7 +79,17 @@ var wayCases = []func(b *testing.B) (string, func(b *testing.B, cli *http.Client
 					if resp.StatusCode != 200 {
 						b.Fatal("expected 200, got", resp.StatusCode)
 					}
-					io.Copy(io.Discard, resp.Body)
+					l, err := strconv.ParseInt(resp.Header.Get("Content-Length"), 10, 64)
+					if err != nil {
+						b.Fatal(err)
+					}
+					n, err := io.Copy(io.Discard, resp.Body)
+					if err != nil {
+						b.Fatal(err)
+					}
+					if l != n {
+						b.Fatal("expected body length", l, "got", n)
+					}
 					resp.Body.Close()
 				}
 			})
@@ -94,17 +114,23 @@ var serverCases = []func(b *testing.B) (string, *httptest.Server){
 	},
 	func(b *testing.B) (string, *httptest.Server) {
 		return "body-1<<10", httptest.NewUnstartedServer(http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
-			io.Copy(rw, io.LimitReader(rand.Reader, 1<<10))
+			const n = 1 << 10
+			rw.Header().Set("Content-Length", strconv.FormatInt(n, 10))
+			io.Copy(rw, io.LimitReader(nullReader{}, n))
 		}))
 	},
 	func(b *testing.B) (string, *httptest.Server) {
 		return "body-1<<20", httptest.NewUnstartedServer(http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
-			io.Copy(rw, io.LimitReader(rand.Reader, 1<<20))
+			const n = 1 << 20
+			rw.Header().Set("Content-Length", strconv.FormatInt(n, 10))
+			io.Copy(rw, io.LimitReader(nullReader{}, n))
 		}))
 	},
 	func(b *testing.B) (string, *httptest.Server) {
 		return "body-1<<30", httptest.NewUnstartedServer(http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
-			io.Copy(rw, io.LimitReader(rand.Reader, 1<<30))
+			const n = 1 << 30
+			rw.Header().Set("Content-Length", strconv.FormatInt(n, 10))
+			io.Copy(rw, io.LimitReader(nullReader{}, n))
 		}))
 	},
 }
@@ -180,4 +206,10 @@ func (t *testPipeServer) DialContext(ctx context.Context, network, address strin
 	c1, c2 := net.Pipe()
 	t.accept <- c1
 	return c2, nil
+}
+
+type nullReader struct{}
+
+func (nullReader) Read(p []byte) (int, error) {
+	return len(p), nil
 }
