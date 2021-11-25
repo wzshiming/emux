@@ -8,14 +8,15 @@ import (
 )
 
 type stream struct {
-	sess   *session
-	sid    uint64
-	idPool *idPool
-	writer *io.PipeWriter
-	reader *io.PipeReader
-	ready  chan struct{}
-	close  chan struct{}
-	once   sync.Once
+	sess     *session
+	sid      uint64
+	idPool   *idPool
+	writer   *io.PipeWriter
+	reader   *io.PipeReader
+	ready    chan struct{}
+	close    chan struct{}
+	once     sync.Once
+	writeMut sync.Mutex
 }
 
 func newStream(sess *session, sid uint64, idPool *idPool, cli bool) *stream {
@@ -85,6 +86,8 @@ func (s *stream) Close() error {
 	if s.isClose() {
 		return nil
 	}
+	s.writeMut.Lock()
+	defer s.writeMut.Unlock()
 	return s.disconnect()
 }
 
@@ -150,6 +153,8 @@ func (s *stream) Write(b []byte) (int, error) {
 	if s.isClose() {
 		return 0, ErrClosed
 	}
+	s.writeMut.Lock()
+	defer s.writeMut.Unlock()
 	l := len(b)
 	maxDataPacketSize := s.sess.instruction.MaxDataPacketSize
 	for uint64(len(b)) > maxDataPacketSize {
