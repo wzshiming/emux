@@ -2,23 +2,10 @@ package emux
 
 import (
 	"context"
-	"fmt"
 	"io"
-	"net"
 	"sync"
 	"sync/atomic"
 	"time"
-)
-
-var (
-	ErrClosed               = net.ErrClosed
-	ErrAlreadyStarted       = fmt.Errorf("session already started")
-	errUnknownStreamID      = fmt.Errorf("unknown stream id")
-	errStreamIsAlreadyReady = fmt.Errorf("stream is already ready")
-	errNoFreeStreamID       = fmt.Errorf("emux: no free stream id")
-	errShortRead            = fmt.Errorf("read length not equal to body length")
-	errStreamAlreadyExists  = fmt.Errorf("stream id already exists")
-	errNoData               = fmt.Errorf("data length cannot be zero")
 )
 
 type session struct {
@@ -29,17 +16,21 @@ type session struct {
 
 	sess map[uint64]*stream
 
-	decode      *Decode
-	encode      *Encode
-	writerMut   sync.Mutex
-	stm         io.ReadWriteCloser
-	isClose     uint32
-	instruction *Instruction
-	lastTime    time.Time
+	decode             *Decode
+	encode             *Encode
+	writerMut          sync.Mutex
+	stm                io.ReadWriteCloser
+	isClose            uint32
+	isClear            uint32
+	instruction        *Instruction
+	lastTime           time.Time
+	skipUpdateLastTime uint32
+	peerClose          chan struct{}
 
-	Timeout   time.Duration
-	Logger    Logger
-	BytesPool BytesPool
+	Logger      Logger
+	BytesPool   BytesPool
+	Timeout     time.Duration
+	IdleTimeout time.Duration
 }
 
 func newSession(ctx context.Context, stm io.ReadWriteCloser, instruction *Instruction) *session {
@@ -50,9 +41,55 @@ func newSession(ctx context.Context, stm io.ReadWriteCloser, instruction *Instru
 		sess:        map[uint64]*stream{},
 		instruction: instruction,
 		stm:         stm,
+		peerClose:   make(chan struct{}),
 		Timeout:     DefaultTimeout,
+		IdleTimeout: DefaultIdleTimeout,
 	}
 	return s
+}
+
+func (s *session) IsClear() bool {
+	return atomic.LoadUint32(&s.isClear) == 1
+}
+
+func (s *session) Clear() {
+	if !atomic.CompareAndSwapUint32(&s.isClear, 0, 1) {
+		return
+	}
+
+	s.cancel()
+
+	done := make(chan struct{})
+	go func() {
+		err := s.execCmd(s.instruction.Close)
+		if err != nil {
+			if s.Logger != nil && !isClosedConnError(err) {
+				s.Logger.Println("emux: Clear: send command", "err", err)
+			}
+		}
+		close(done)
+	}()
+
+	timer := time.NewTimer(s.Timeout)
+	defer timer.Stop()
+
+	select {
+	case <-done:
+	case <-timer.C:
+		if s.Logger != nil {
+			s.Logger.Println("emux: Clear: send close command timeout")
+		}
+		return
+	}
+
+	select {
+	case <-s.peerClose:
+	case <-timer.C:
+		if s.Logger != nil {
+			s.Logger.Println("emux: Clear: wait peer close command timeout")
+		}
+		return
+	}
 }
 
 func (s *session) IsClosed() bool {
@@ -63,16 +100,10 @@ func (s *session) Close() error {
 	if !atomic.CompareAndSwapUint32(&s.isClose, 0, 1) {
 		return nil
 	}
+	s.Clear()
 
-	s.mut.Lock()
-	defer s.mut.Unlock()
-	s.writeByte(s.instruction.Close)
-	s.stm.Close()
-	s.cancel()
-	for _, stm := range s.sess {
-		stm.shutdown()
-	}
-	return nil
+	s.freeAllStream()
+	return s.stm.Close()
 }
 
 func (s *session) newStream(sid uint64, idPool *idPool, cli bool) *stream {
@@ -84,6 +115,9 @@ func (s *session) newStream(sid uint64, idPool *idPool, cli bool) *stream {
 }
 
 func (s *session) checkStream(sid uint64) error {
+	if sid == 0 {
+		return errUnknownStreamID
+	}
 	s.mut.RLock()
 	defer s.mut.RUnlock()
 	stm := s.sess[sid]
@@ -91,6 +125,17 @@ func (s *session) checkStream(sid uint64) error {
 		return errStreamAlreadyExists
 	}
 	return nil
+}
+
+func (s *session) freeAllStream() {
+	s.mut.Lock()
+	defer s.mut.Unlock()
+	if len(s.sess) > 0 {
+		for _, stm := range s.sess {
+			stm.shutdown()
+		}
+		s.sess = map[uint64]*stream{}
+	}
 }
 
 func (s *session) freeStream(sid uint64) {
@@ -110,18 +155,21 @@ func (s *session) getStream(sid uint64) *stream {
 }
 
 func (s *session) handleDisconnect(cmd uint8, sid uint64) error {
+	if s.IsClosed() {
+		return ErrClosed
+	}
 	stm := s.getStream(sid)
 	if stm == nil {
 		if s.Logger != nil {
-			s.Logger.Println("emux: get stream", "cmd", cmd, "sid", sid, "err", errUnknownStreamID)
+			s.Logger.Println("emux: disconnected stream: get stream", "cmd", s.instruction.Info(cmd), "sid", sid, "err", errUnknownStreamID)
 		}
-		return s.exec(s.instruction.Disconnected, sid)
+		return s.execDisconnected(sid)
 	}
 
 	err := stm.disconnected()
 	if err != nil {
-		if s.Logger != nil {
-			s.Logger.Println("emux: disconnected stream error", "cmd", cmd, "sid", sid, "err", err)
+		if s.Logger != nil && !isClosedConnError(err) {
+			s.Logger.Println("emux: disconnected stream", "cmd", s.instruction.Info(cmd), "sid", sid, "err", err)
 		}
 		return err
 	}
@@ -130,13 +178,16 @@ func (s *session) handleDisconnect(cmd uint8, sid uint64) error {
 }
 
 func (s *session) handleData(cmd uint8, sid uint64, buf []byte) error {
+	if s.IsClosed() {
+		return ErrClosed
+	}
 	i, err := s.decode.ReadUvarint()
 	if err == nil && i == 0 {
 		err = errNoData
 	}
 	if err != nil {
-		if s.Logger != nil {
-			s.Logger.Println("emux: read body length error", "cmd", cmd, "sid", sid, "err", err)
+		if s.Logger != nil && !isClosedConnError(err) {
+			s.Logger.Println("emux: handle data: read body length", "cmd", s.instruction.Info(cmd), "sid", sid, "err", err)
 		}
 		return err
 	}
@@ -147,15 +198,15 @@ func (s *session) handleData(cmd uint8, sid uint64, buf []byte) error {
 	if stm == nil {
 		n, err := io.CopyBuffer(io.Discard, r, buf)
 		if err != nil {
-			if s.Logger != nil {
-				s.Logger.Println("emux: write to discard error", "cmd", cmd, "sid", sid, "err", err)
+			if s.Logger != nil && !isClosedConnError(err) {
+				s.Logger.Println("emux: handle data: write to discard", "cmd", s.instruction.Info(cmd), "sid", sid, "err", err)
 			}
 			return err
 		}
 		if n != int64(i) {
 			err = errShortRead
 			if s.Logger != nil {
-				s.Logger.Println("emux: read body length error", "cmd", cmd, "sid", sid, "err", err)
+				s.Logger.Println("emux: handle data: read body length", "cmd", s.instruction.Info(cmd), "sid", sid, "err", err)
 			}
 			return err
 		}
@@ -164,15 +215,15 @@ func (s *session) handleData(cmd uint8, sid uint64, buf []byte) error {
 
 	n, err := io.CopyBuffer(stm.writer, r, buf)
 	if err != nil {
-		if s.Logger != nil {
-			s.Logger.Println("emux: write to stream error", "cmd", cmd, "sid", sid, "err", err)
+		if s.Logger != nil && !isClosedConnError(err) {
+			s.Logger.Println("emux: handle data: write to stream", "cmd", s.instruction.Info(cmd), "sid", sid, "err", err)
 		}
 		return err
 	}
 	if n != int64(i) {
 		err = errShortRead
 		if s.Logger != nil {
-			s.Logger.Println("emux: read body length error", "cmd", cmd, "sid", sid, "err", err)
+			s.Logger.Println("emux: handle data: read body length", "cmd", s.instruction.Info(cmd), "sid", sid, "err", err)
 		}
 		return err
 	}
@@ -180,18 +231,24 @@ func (s *session) handleData(cmd uint8, sid uint64, buf []byte) error {
 }
 
 func (s *session) init() {
-	s.decode = NewDecode(readers.Get(s.stm))
-	s.encode = NewEncode(writers.Get(s.stm))
+	s.decode = NewDecode(s.stm)
+	s.encode = NewEncode(s.stm)
 }
 
 func (s *session) handleLoop(connectFunc, connectedFunc func(cmd uint8, sid uint64) error) {
+	var oncePeerClose sync.Once
+	peerCloseFunc := func() {
+		oncePeerClose.Do(func() {
+			close(s.peerClose)
+			s.Clear()
+		})
+	}
 	defer func() {
-		s.Close()
-		readers.Put(s.decode.DecodeReader)
-		s.decode = nil
+		peerCloseFunc()
+
 		s.writerMut.Lock()
 		defer s.writerMut.Unlock()
-		writers.Put(s.encode.EncodeWriter)
+		s.decode = nil
 		s.encode = nil
 	}()
 	var buf []byte
@@ -201,29 +258,31 @@ func (s *session) handleLoop(connectFunc, connectedFunc func(cmd uint8, sid uint
 	} else {
 		buf = make([]byte, bufSize)
 	}
+
 	for !s.IsClosed() {
 		s.updateTimeout()
 		cmd, err := s.decode.ReadByte()
 		if err != nil {
-			if s.Logger != nil {
-				s.Logger.Println("emux: handleLoop:", "err", err)
+			if s.Logger != nil && !isClosedConnError(err) {
+				s.Logger.Println("emux: handle loop: get command", "err", err)
 			}
 			return
 		}
 		switch cmd {
 		case s.instruction.Close:
-			return
+			go peerCloseFunc()
+			continue
 		case s.instruction.Connect, s.instruction.Connected, s.instruction.Disconnect, s.instruction.Disconnected, s.instruction.Data:
 		default:
 			if s.Logger != nil {
-				s.Logger.Println("emux: handleLoop: unknown cmd", "cmd", cmd)
+				s.Logger.Println("emux: handle loop: unknown cmd", "cmd", s.instruction.Info(cmd))
 			}
 			return
 		}
 		sid, err := s.decode.ReadUvarint()
 		if err != nil {
-			if s.Logger != nil {
-				s.Logger.Println("emux: handleLoop:", "cmd", cmd, "err", err)
+			if s.Logger != nil && !isClosedConnError(err) {
+				s.Logger.Println("emux: handle loop: get stream id", "cmd", s.instruction.Info(cmd), "err", err)
 			}
 			return
 		}
@@ -232,7 +291,7 @@ func (s *session) handleLoop(connectFunc, connectedFunc func(cmd uint8, sid uint
 		case s.instruction.Connect:
 			if connectFunc == nil {
 				if s.Logger != nil {
-					s.Logger.Println("emux: server can't handle", "cmd", cmd, "sid", sid)
+					s.Logger.Println("emux: handle loop: server can't handle", "cmd", s.instruction.Info(cmd), "sid", sid)
 				}
 				return
 			} else {
@@ -244,7 +303,7 @@ func (s *session) handleLoop(connectFunc, connectedFunc func(cmd uint8, sid uint
 		case s.instruction.Connected:
 			if connectedFunc == nil {
 				if s.Logger != nil {
-					s.Logger.Println("emux: server can't handle", "cmd", cmd, "sid", sid)
+					s.Logger.Println("emux: handle loop: server can't handle", "cmd", s.instruction.Info(cmd), "sid", sid)
 				}
 				return
 			} else {
@@ -268,22 +327,28 @@ func (s *session) handleLoop(connectFunc, connectedFunc func(cmd uint8, sid uint
 	}
 }
 
-func (s *session) writeByte(b uint8) error {
+func (s *session) execCmd(cmd uint8) error {
 	s.writerMut.Lock()
 	defer s.writerMut.Unlock()
 	if s.encode == nil {
 		return ErrClosed
 	}
-	err := s.encode.WriteByte(b)
+	err := s.encode.WriteByte(cmd)
 	if err != nil {
+		if err == io.ErrClosedPipe {
+			err = ErrClosed
+		}
 		return err
 	}
 
 	s.updateTimeout()
-	return s.encode.Flush()
+	return nil
 }
 
 func (s *session) exec(cmd uint8, sid uint64) error {
+	if s.IsClosed() {
+		return ErrClosed
+	}
 	s.writerMut.Lock()
 	defer s.writerMut.Unlock()
 	if s.encode == nil {
@@ -291,11 +356,14 @@ func (s *session) exec(cmd uint8, sid uint64) error {
 	}
 	err := s.encode.WriteCmd(cmd, sid)
 	if err != nil {
+		if err == io.ErrClosedPipe {
+			err = ErrClosed
+		}
 		return err
 	}
 
 	s.updateTimeout()
-	return s.encode.Flush()
+	return nil
 }
 
 func (s *session) execConnect(sid uint64) error {
@@ -315,6 +383,10 @@ func (s *session) execDisconnected(sid uint64) error {
 }
 
 func (s *session) writeData(sid uint64, b []byte) error {
+	if s.IsClosed() {
+		return ErrClosed
+	}
+
 	s.writerMut.Lock()
 	defer s.writerMut.Unlock()
 	if s.encode == nil {
@@ -322,26 +394,36 @@ func (s *session) writeData(sid uint64, b []byte) error {
 	}
 	err := s.encode.WriteCmd(s.instruction.Data, sid)
 	if err != nil {
+		if err == io.ErrClosedPipe {
+			err = ErrClosed
+		}
 		return err
 	}
 	err = s.encode.WriteBytes(b)
 	if err != nil {
+		if err == io.ErrClosedPipe {
+			err = ErrClosed
+		}
 		return err
 	}
 
 	s.updateTimeout()
-	return s.encode.Flush()
+	return nil
 }
 
 func (s *session) updateTimeout() {
 	if s.Timeout > 0 {
+		if !atomic.CompareAndSwapUint32(&s.skipUpdateLastTime, 0, 1) {
+			return
+		}
+		defer atomic.StoreUint32(&s.skipUpdateLastTime, 0)
 		if t, ok := s.stm.(deadline); ok {
 			if time.Since(s.lastTime) < s.Timeout/2 {
 				return
 			}
 			now := time.Now()
 			s.lastTime = now
-			t.SetDeadline(now.Add(s.Timeout))
+			t.SetDeadline(now.Add(s.IdleTimeout))
 		}
 	}
 }

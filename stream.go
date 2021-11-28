@@ -4,7 +4,6 @@ import (
 	"context"
 	"io"
 	"sync"
-	"time"
 )
 
 type stream struct {
@@ -43,31 +42,21 @@ func (s *stream) connect(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+
 	if s.sess.Timeout > 0 {
-		timer := time.NewTimer(s.sess.Timeout)
-		defer timer.Stop()
-		select {
-		case <-ctx.Done():
-			s.Close()
-			return ErrClosed
-		case <-s.ready:
-			return nil
-		case <-s.close:
-			return ErrClosed
-		case <-timer.C:
-			s.Close()
-			return ErrTimeout
-		}
-	} else {
-		select {
-		case <-ctx.Done():
-			s.Close()
-			return ErrClosed
-		case <-s.ready:
-			return nil
-		case <-s.close:
-			return ErrClosed
-		}
+		var cancel func()
+		ctx, cancel = context.WithTimeout(ctx, s.sess.Timeout)
+		defer cancel()
+	}
+
+	select {
+	case <-ctx.Done():
+		s.Close()
+		return ErrClosed
+	case <-s.ready:
+		return nil
+	case <-s.close:
+		return ErrClosed
 	}
 }
 
@@ -109,7 +98,7 @@ func (s *stream) isReady() bool {
 	}
 }
 
-func (s *stream) shut() {
+func (s *stream) clear() {
 	close(s.close)
 	s.writer.Close()
 	if s.idPool != nil {
@@ -119,7 +108,7 @@ func (s *stream) shut() {
 
 func (s *stream) shutdown() {
 	s.once.Do(func() {
-		s.shut()
+		s.clear()
 	})
 	return
 }
@@ -128,7 +117,7 @@ func (s *stream) disconnect() error {
 	var err error
 	s.once.Do(func() {
 		err = s.sess.execDisconnect(s.sid)
-		s.shut()
+		s.clear()
 	})
 	return err
 }
@@ -137,7 +126,7 @@ func (s *stream) disconnected() error {
 	var err error
 	s.once.Do(func() {
 		err = s.sess.execDisconnected(s.sid)
-		s.shut()
+		s.clear()
 	})
 	return err
 }
@@ -167,9 +156,11 @@ func (s *stream) Write(b []byte) (int, error) {
 			return 0, ErrClosed
 		}
 	}
-	err := s.sess.writeData(s.sid, b)
-	if err != nil {
-		return 0, err
+	if len(b) > 0 {
+		err := s.sess.writeData(s.sid, b)
+		if err != nil {
+			return 0, err
+		}
 	}
 	return l, nil
 }

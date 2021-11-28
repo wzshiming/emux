@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"sync"
-	"time"
 )
 
 // DefaultHandshake
@@ -18,7 +17,6 @@ var (
 	HandshakeData          = []byte("EMUX ")
 	DefaultClientHandshake = NewHandshake(HandshakeData, true)
 	DefaultServerHandshake = NewHandshake(HandshakeData, false)
-	DefaultTimeout         = 600 * time.Second
 )
 
 type Handshake interface {

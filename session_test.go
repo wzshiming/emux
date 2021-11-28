@@ -36,7 +36,7 @@ func TestSession(t *testing.T) {
 					}
 					buf := make([]byte, math.MaxUint16)
 					go func() {
-						defer sess.Close()
+						defer stm.Close()
 						for {
 							n, err := stm.Read(buf)
 							if err != nil {
@@ -70,6 +70,11 @@ func TestSession(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		c, err := sess.Dial(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		c.Close()
 		stm, err := sess.Dial(context.Background())
 		if err != nil {
 			t.Fatal(err)

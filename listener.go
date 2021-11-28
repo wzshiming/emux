@@ -21,6 +21,7 @@ type ListenerSession struct {
 	Handshake   Handshake
 	Instruction Instruction
 	Timeout     time.Duration
+	IdleTimeout time.Duration
 }
 
 func NewListener(ctx context.Context, listener net.Listener) *ListenerSession {
@@ -32,12 +33,13 @@ func NewListener(ctx context.Context, listener net.Listener) *ListenerSession {
 		Handshake:   DefaultServerHandshake,
 		Instruction: DefaultInstruction,
 		Timeout:     DefaultTimeout,
+		IdleTimeout: DefaultIdleTimeout,
 	}
 	return l
 }
 
 func (l *ListenerSession) start() {
-	l.acceptChan = make(chan io.ReadWriteCloser, 0)
+	l.acceptChan = make(chan io.ReadWriteCloser)
 	go l.run()
 }
 
@@ -46,8 +48,8 @@ func (l *ListenerSession) run() {
 	for l.ctx.Err() == nil && !l.IsClosed() {
 		conn, err := l.listener.Accept()
 		if err != nil {
-			if l.Logger != nil {
-				l.Logger.Println("emux: listener: accept:", "err", err)
+			if l.Logger != nil && !isClosedConnError(err) {
+				l.Logger.Println("emux: run: accept", "err", err)
 			}
 			return
 		}
@@ -60,7 +62,7 @@ func (l *ListenerSession) acceptSession(conn net.Conn) {
 		err := l.Handshake.Handshake(l.ctx, conn)
 		if err != nil {
 			if l.Logger != nil {
-				l.Logger.Println("emux: listener: handshake:", "err", err)
+				l.Logger.Println("emux: accept session: handshake", "err", err)
 			}
 			conn.Close()
 			return
@@ -70,12 +72,14 @@ func (l *ListenerSession) acceptSession(conn net.Conn) {
 	sess.Logger = l.Logger
 	sess.BytesPool = l.BytesPool
 	sess.Timeout = l.Timeout
+	sess.IdleTimeout = l.IdleTimeout
 	err := sess.AcceptTo(l.acceptChan)
 	if err != nil {
 		if l.Logger != nil {
-			l.Logger.Println("emux: listener: accept:", "err", err)
+			l.Logger.Println("emux: accept session: accept to", "err", err)
 		}
 	}
+	sess.Close()
 }
 
 func (l *ListenerSession) Accept() (net.Conn, error) {
@@ -85,7 +89,6 @@ func (l *ListenerSession) Accept() (net.Conn, error) {
 	}
 	select {
 	case <-l.ctx.Done():
-		close(l.acceptChan)
 		return nil, ErrClosed
 	case stm, ok := <-l.acceptChan:
 		if !ok {

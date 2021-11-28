@@ -3,11 +3,13 @@ package emux
 import (
 	"context"
 	"net"
+	"sync"
 	"time"
 )
 
 type DialerSession struct {
 	ctx         context.Context
+	mut         sync.Mutex
 	dialer      Dialer
 	localAddr   net.Addr
 	remoteAddr  net.Addr
@@ -17,6 +19,7 @@ type DialerSession struct {
 	Handshake   Handshake
 	Instruction Instruction
 	Timeout     time.Duration
+	IdleTimeout time.Duration
 	Retry       int
 }
 
@@ -27,16 +30,29 @@ func NewDialer(ctx context.Context, dialer Dialer) *DialerSession {
 		Handshake:   DefaultClientHandshake,
 		Instruction: DefaultInstruction,
 		Timeout:     DefaultTimeout,
+		IdleTimeout: DefaultIdleTimeout,
 		Retry:       3,
 	}
 }
 
+func (d *DialerSession) Close() error {
+	d.mut.Lock()
+	defer d.mut.Unlock()
+	if d.sess != nil {
+		d.sess.Close()
+		d.sess = nil
+	}
+	return nil
+}
+
 func (d *DialerSession) DialContext(ctx context.Context, network, address string) (net.Conn, error) {
+	d.mut.Lock()
+	defer d.mut.Unlock()
 	return d.dialContext(ctx, network, address, d.Retry)
 }
 
 func (d *DialerSession) dialContext(ctx context.Context, network, address string, retry int) (net.Conn, error) {
-	if d.sess == nil || d.sess.IsClosed() {
+	if d.sess == nil || d.sess.IsClear() {
 		if d.sess != nil {
 			d.sess.Close()
 			d.sess = nil
@@ -57,6 +73,7 @@ func (d *DialerSession) dialContext(ctx context.Context, network, address string
 		sess.Logger = d.Logger
 		sess.BytesPool = d.BytesPool
 		sess.Timeout = d.Timeout
+		sess.IdleTimeout = d.IdleTimeout
 		if err != nil {
 			return nil, err
 		}

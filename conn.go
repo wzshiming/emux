@@ -1,17 +1,11 @@
 package emux
 
 import (
-	"fmt"
 	"io"
 	"net"
-	"sync"
 	"sync/atomic"
 	"time"
 	"unsafe"
-)
-
-var (
-	ErrTimeout = fmt.Errorf("timeout")
 )
 
 func newConn(stm io.ReadWriteCloser, localAddr net.Addr, remoteAddr net.Addr) net.Conn {
@@ -29,8 +23,7 @@ type conn struct {
 
 	readDeadline  *time.Time
 	writeDeadline *time.Time
-	once          sync.Once
-	err           error
+	onceError     onceError
 }
 
 func (c *conn) LocalAddr() net.Addr {
@@ -69,19 +62,21 @@ func (c *conn) Close() error {
 	return c.close(ErrClosed)
 }
 
-func (c *conn) close(err error) error {
-	c.once.Do(func() {
-		c.err = c.readWriteCloser.Close()
-		if c.err == nil {
-			c.err = err
-		}
-	})
-	return c.err
+func (c *conn) close(e error) error {
+	if err := c.onceError.Load(); err != nil {
+		return err
+	}
+	err := c.readWriteCloser.Close()
+	if err == nil {
+		err = e
+	}
+	c.onceError.Store(err)
+	return err
 }
 
 func (c *conn) Read(b []byte) (int, error) {
-	if c.err != nil {
-		return 0, c.err
+	if err := c.onceError.Load(); err != nil {
+		return 0, err
 	}
 	d := (*time.Time)(atomic.LoadPointer((*unsafe.Pointer)(unsafe.Pointer(&c.writeDeadline))))
 	if d == nil {
@@ -106,8 +101,8 @@ func (c *conn) Read(b []byte) (int, error) {
 }
 
 func (c *conn) Write(b []byte) (int, error) {
-	if c.err != nil {
-		return 0, c.err
+	if err := c.onceError.Load(); err != nil {
+		return 0, err
 	}
 	d := (*time.Time)(atomic.LoadPointer((*unsafe.Pointer)(unsafe.Pointer(&c.writeDeadline))))
 	if d == nil {

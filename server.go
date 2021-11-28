@@ -29,7 +29,7 @@ func (s *Server) start() {
 
 func (s *Server) Accept() (io.ReadWriteCloser, error) {
 	s.onceStart.Do(s.start)
-	if s.IsClosed() {
+	if s.IsClear() {
 		return nil, ErrClosed
 	}
 	select {
@@ -44,12 +44,17 @@ func (s *Server) Accept() (io.ReadWriteCloser, error) {
 	}
 }
 
+func (s *Server) Close() error {
+	return s.session.Close()
+}
+
 func (s *Server) AcceptTo(acceptChan chan io.ReadWriteCloser) error {
 	if s.acceptChan != nil {
 		return ErrAlreadyStarted
 	}
 	s.acceptChan = acceptChan
-	s.onceStart.Do(s.start)
+	s.init()
+	s.handleLoop(s.handleConnect, nil)
 	return nil
 }
 
@@ -58,29 +63,29 @@ func (s *Server) acceptStream(sid uint64) *stream {
 }
 
 func (s *Server) handleConnect(cmd uint8, sid uint64) error {
-	if s.IsClosed() {
+	if s.IsClear() {
 		return ErrClosed
 	}
 	err := s.checkStream(sid)
 	if err != nil {
 		if s.Logger != nil {
-			s.Logger.Println("emux: check stream", "cmd", cmd, "sid", sid, "err", err)
+			s.Logger.Println("emux: handle connect: check stream", "cmd", s.instruction.Info(cmd), "sid", sid, "err", err)
 		}
 		return err
 	}
 	stm := s.acceptStream(sid)
-	err = stm.connected()
-	if err != nil {
-		if s.Logger != nil {
-			s.Logger.Println("emux: connected", "cmd", cmd, "sid", sid, "err", err)
-		}
-		return err
-	}
 	select {
 	case <-s.ctx.Done():
 		stm.Close()
 		return ErrClosed
 	case s.acceptChan <- stm:
+		err = stm.connected()
+		if err != nil {
+			if s.Logger != nil && !isClosedConnError(err) {
+				s.Logger.Println("emux: handle connect: connected", "cmd", s.instruction.Info(cmd), "sid", sid, "err", err)
+			}
+			return err
+		}
 		return nil
 	}
 }

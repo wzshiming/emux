@@ -15,6 +15,7 @@ type ListenConfigSession struct {
 	Handshake    Handshake
 	Instruction  Instruction
 	Timeout      time.Duration
+	IdleTimeout  time.Duration
 }
 
 func NewListenConfig(ctx context.Context, listener ListenConfig) *ListenConfigSession {
@@ -24,6 +25,7 @@ func NewListenConfig(ctx context.Context, listener ListenConfig) *ListenConfigSe
 		Handshake:    DefaultServerHandshake,
 		Instruction:  DefaultInstruction,
 		Timeout:      DefaultTimeout,
+		IdleTimeout:  DefaultIdleTimeout,
 	}
 }
 
@@ -41,5 +43,6 @@ func (l *ListenConfigSession) Listen(ctx context.Context, network, address strin
 	lt.Handshake = l.Handshake
 	lt.Instruction = l.Instruction
 	lt.Timeout = l.Timeout
+	lt.IdleTimeout = l.IdleTimeout
 	return lt, nil
 }

@@ -8,7 +8,7 @@ import (
 	"net/http/httptest"
 	"strconv"
 	"strings"
-	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -23,6 +23,9 @@ func BenchmarkAll(b *testing.B) {
 						aliveName, alive := aliveFunc(b)
 						wayName, way := wayFunc(b)
 						connName, dialer, listener := connFunc(b)
+						if closer, ok := dialer.(io.Closer); ok {
+							defer closer.Close()
+						}
 						server.Listener = listener
 						server.Start()
 						defer server.Close()
@@ -168,8 +171,7 @@ var connCases = []func(b *testing.B) (string, Dialer, net.Listener){
 type testPipeServer struct {
 	accept  chan net.Conn
 	addr    net.Addr
-	once    sync.Once
-	isClose bool
+	isClose uint32
 }
 
 func newTestPipeServer() *testPipeServer {
@@ -188,10 +190,9 @@ func (t *testPipeServer) Accept() (net.Conn, error) {
 }
 
 func (t *testPipeServer) Close() error {
-	t.once.Do(func() {
-		t.isClose = true
+	if atomic.CompareAndSwapUint32(&t.isClose, 0, 1) {
 		close(t.accept)
-	})
+	}
 	return nil
 }
 
@@ -200,7 +201,7 @@ func (t *testPipeServer) Addr() net.Addr {
 }
 
 func (t *testPipeServer) DialContext(ctx context.Context, network, address string) (net.Conn, error) {
-	if t.isClose {
+	if atomic.LoadUint32(&t.isClose) == 1 {
 		return nil, net.ErrClosed
 	}
 	c1, c2 := net.Pipe()

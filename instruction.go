@@ -2,6 +2,22 @@ package emux
 
 import (
 	"encoding/binary"
+	"fmt"
+	"time"
+)
+
+var (
+	DefaultInstruction = Instruction{
+		Close:             0x00,
+		Connect:           0xa0,
+		Connected:         0xa1,
+		Disconnect:        0xc0,
+		Disconnected:      0xc1,
+		Data:              0xb0,
+		MaxDataPacketSize: bufSize - 1 - 2*binary.MaxVarintLen64,
+	}
+	DefaultTimeout     = 30 * time.Second
+	DefaultIdleTimeout = 600 * time.Second
 )
 
 // Frame
@@ -42,12 +58,21 @@ type Instruction struct {
 	MaxDataPacketSize uint64 // max data packet size
 }
 
-var DefaultInstruction = Instruction{
-	Close:             0x00,
-	Connect:           0xa0,
-	Connected:         0xa1,
-	Disconnect:        0xc0,
-	Disconnected:      0xc1,
-	Data:              0xb0,
-	MaxDataPacketSize: bufSize - 1 - 2*binary.MaxVarintLen64,
+func (i Instruction) Info(cmd uint8) string {
+	switch cmd {
+	case i.Close:
+		return "Close"
+	case i.Connect:
+		return "Connect"
+	case i.Connected:
+		return "Connected"
+	case i.Disconnect:
+		return "Disconnect"
+	case i.Disconnected:
+		return "Disconnected"
+	case i.Data:
+		return "Data"
+	default:
+		return fmt.Sprintf("Unknown(%d)", cmd)
+	}
 }

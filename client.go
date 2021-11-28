@@ -27,7 +27,7 @@ func (c *Client) start() {
 
 func (c *Client) Dial(ctx context.Context) (io.ReadWriteCloser, error) {
 	c.onceStart.Do(c.start)
-	if c.IsClosed() {
+	if c.IsClear() {
 		return nil, ErrClosed
 	}
 	wc := c.dailStream()
@@ -57,14 +57,14 @@ func (c *Client) handleConnected(cmd uint8, sid uint64) error {
 	if stm == nil {
 		err := errUnknownStreamID
 		if c.Logger != nil {
-			c.Logger.Println("emux: get stream", "cmd", cmd, "sid", sid, "err", err)
+			c.Logger.Println("emux: handle connected: get stream", "cmd", c.instruction.Info(cmd), "sid", sid, "err", err)
 		}
 		return err
 	}
 	if stm.isReady() {
 		err := errStreamIsAlreadyReady
 		if c.Logger != nil {
-			c.Logger.Println("emux: ready", "cmd", cmd, "sid", sid, "err", err)
+			c.Logger.Println("emux: handle connected: ready", "cmd", c.instruction.Info(cmd), "sid", sid, "err", err)
 		}
 		return err
 	}
