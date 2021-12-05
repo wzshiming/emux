@@ -158,6 +158,18 @@ var connCases = []func(b *testing.B) (string, Dialer, net.Listener){
 		return "tcpHttpEmux", NewDialer(ctx, &net.Dialer{}), NewListener(ctx, t)
 	},
 	func(b *testing.B) (string, Dialer, net.Listener) {
+		ctx, _ := context.WithTimeout(context.Background(), 10*time.Second)
+		mux := &sMux{
+			dialer:       &net.Dialer{},
+			listenConfig: &net.ListenConfig{},
+		}
+		s, err := mux.Listen(ctx, "tcp", ":0")
+		if err != nil {
+			b.Fatal(err)
+		}
+		return "tcpHttpSmux", mux, s
+	},
+	func(b *testing.B) (string, Dialer, net.Listener) {
 		l := newTestPipeServer()
 		return "pipeHttp", l, l
 	},
@@ -165,6 +177,20 @@ var connCases = []func(b *testing.B) (string, Dialer, net.Listener){
 		ctx, _ := context.WithTimeout(context.Background(), 10*time.Second)
 		l := newTestPipeServer()
 		return "pipeHttpEmux", NewDialer(ctx, l), NewListener(ctx, l)
+	},
+	func(b *testing.B) (string, Dialer, net.Listener) {
+		ctx, _ := context.WithTimeout(context.Background(), 10*time.Second)
+		l := newTestPipeServer()
+
+		mux := &sMux{
+			dialer:       l,
+			listenConfig: l,
+		}
+		s, err := mux.Listen(ctx, "tcp", ":0")
+		if err != nil {
+			b.Fatal(err)
+		}
+		return "pipeHttpSmux", mux, s
 	},
 }
 
@@ -179,6 +205,10 @@ func newTestPipeServer() *testPipeServer {
 		accept: make(chan net.Conn, 1),
 		addr:   &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 80},
 	}
+}
+
+func (t *testPipeServer) Listen(ctx context.Context, network, address string) (net.Listener, error) {
+	return t, nil
 }
 
 func (t *testPipeServer) Accept() (net.Conn, error) {
