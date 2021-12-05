@@ -19,6 +19,8 @@ type session struct {
 	decode             *Decode
 	encode             *Encode
 	writerMut          sync.Mutex
+	writerCount        int64
+	flushCh            chan struct{}
 	stm                io.ReadWriteCloser
 	isClose            uint32
 	isClear            uint32
@@ -26,6 +28,7 @@ type session struct {
 	lastTime           time.Time
 	skipUpdateLastTime uint32
 	peerClose          chan struct{}
+	onceError          onceError
 
 	Logger      Logger
 	BytesPool   BytesPool
@@ -41,6 +44,7 @@ func newSession(ctx context.Context, stm io.ReadWriteCloser, instruction *Instru
 		sess:        map[uint64]*stream{},
 		instruction: instruction,
 		stm:         stm,
+		flushCh:     make(chan struct{}, 1),
 		peerClose:   make(chan struct{}),
 		Timeout:     DefaultTimeout,
 		IdleTimeout: DefaultIdleTimeout,
@@ -67,6 +71,15 @@ func (s *session) Clear() {
 				s.Logger.Println("emux: Clear: send command", "err", err)
 			}
 		}
+
+		for interval := time.Millisecond; interval < time.Second &&
+			atomic.LoadInt64(&s.writerCount) != 0; interval <<= 1 {
+			time.Sleep(interval)
+		}
+
+		s.writerMut.Lock()
+		defer s.writerMut.Unlock()
+		s.flush(true)
 		close(done)
 	}()
 
@@ -231,8 +244,8 @@ func (s *session) handleData(cmd uint8, sid uint64, buf []byte) error {
 }
 
 func (s *session) init() {
-	s.decode = NewDecode(s.stm)
-	s.encode = NewEncode(s.stm)
+	s.decode = NewDecode(readers.Get(s.stm))
+	s.encode = NewEncode(writers.Get(s.stm))
 }
 
 func (s *session) handleLoop(connectFunc, connectedFunc func(cmd uint8, sid uint64) error) {
@@ -243,11 +256,14 @@ func (s *session) handleLoop(connectFunc, connectedFunc func(cmd uint8, sid uint
 			s.Clear()
 		})
 	}
+	go s.flushLoop()
 	defer func() {
 		peerCloseFunc()
 
 		s.writerMut.Lock()
 		defer s.writerMut.Unlock()
+		writers.Put(s.encode.Writer)
+		readers.Put(s.decode.Reader)
 		s.decode = nil
 		s.encode = nil
 	}()
@@ -342,7 +358,7 @@ func (s *session) execCmd(cmd uint8) error {
 	}
 
 	s.updateTimeout()
-	return nil
+	return s.flush(false)
 }
 
 func (s *session) exec(cmd uint8, sid uint64) error {
@@ -363,7 +379,7 @@ func (s *session) exec(cmd uint8, sid uint64) error {
 	}
 
 	s.updateTimeout()
-	return nil
+	return s.flush(false)
 }
 
 func (s *session) execConnect(sid uint64) error {
@@ -387,6 +403,8 @@ func (s *session) writeData(sid uint64, b []byte) error {
 		return ErrClosed
 	}
 
+	atomic.AddInt64(&s.writerCount, 1)
+	defer atomic.AddInt64(&s.writerCount, -1)
 	s.writerMut.Lock()
 	defer s.writerMut.Unlock()
 	if s.encode == nil {
@@ -408,7 +426,7 @@ func (s *session) writeData(sid uint64, b []byte) error {
 	}
 
 	s.updateTimeout()
-	return nil
+	return s.flush(uint64(len(b)) == s.instruction.MaxDataPacketSize)
 }
 
 func (s *session) updateTimeout() {
@@ -426,4 +444,52 @@ func (s *session) updateTimeout() {
 			t.SetDeadline(now.Add(s.IdleTimeout))
 		}
 	}
+}
+
+func (s *session) flushLoop() {
+	for !s.IsClosed() {
+		select {
+		case <-s.flushCh:
+			s.writerMut.Lock()
+			s.flush(true)
+			s.writerMut.Unlock()
+		}
+	}
+}
+
+func (s *session) flushLater() {
+	select {
+	case s.flushCh <- struct{}{}:
+	default:
+	}
+}
+
+func (s *session) flush(force bool) error {
+	err := s.onceError.Load()
+	if err != nil {
+		return err
+	}
+	if s.encode == nil {
+		return nil
+	}
+	flusher, ok := s.encode.Writer.(Flusher)
+	if !ok {
+		return nil
+	}
+
+	if !force {
+		buffered := flusher.Buffered()
+		writerCount := atomic.LoadInt64(&s.writerCount)
+		// There is too little buffered data and more data to follow, so wait for subsequent flush
+		if uint64(buffered) < s.instruction.MaxDataPacketSize/2 && writerCount != 0 {
+			s.flushLater()
+			return nil
+		}
+	}
+
+	err = flusher.Flush()
+	if err != nil {
+		s.onceError.Store(err)
+	}
+	return err
 }
