@@ -28,6 +28,15 @@ var (
 	errNoData               = fmt.Errorf("data length cannot be zero")
 )
 
+type Flusher interface {
+	Buffered() int
+	Flush() error
+}
+
+type ByteReader interface {
+	ReadByte() (byte, error)
+}
+
 // ListenConfig contains options for listening to an address.
 type ListenConfig interface {
 	Listen(ctx context.Context, network, address string) (net.Listener, error)

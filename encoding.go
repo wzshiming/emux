@@ -62,6 +62,9 @@ func (d *Decode) ReadUvarint() (uint64, error) {
 }
 
 func (d *Decode) ReadByte() (byte, error) {
+	if r, ok := d.Reader.(ByteReader); ok {
+		return r.ReadByte()
+	}
 	_, err := d.Read(d.buf[:1])
 	if err != nil {
 		return 0, err
