@@ -105,7 +105,7 @@ func (l *ListenerSession) Accept() (net.Conn, error) {
 			stm.Close()
 			return l.Accept()
 		}
-		return newConn(stm, conn.LocalAddr(), conn.RemoteAddr()), nil
+		return NewConn(stm, conn.LocalAddr(), conn.RemoteAddr()), nil
 	}
 }
 

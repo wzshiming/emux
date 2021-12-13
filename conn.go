@@ -8,7 +8,10 @@ import (
 	"unsafe"
 )
 
-func newConn(stm io.ReadWriteCloser, localAddr net.Addr, remoteAddr net.Addr) net.Conn {
+func NewConn(stm io.ReadWriteCloser, localAddr net.Addr, remoteAddr net.Addr) net.Conn {
+	if c, ok := stm.(net.Conn); ok {
+		return c
+	}
 	return &conn{
 		readWriteCloser: stm,
 		localAddr:       localAddr,

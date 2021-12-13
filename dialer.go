@@ -92,5 +92,5 @@ func (d *DialerSession) dialContext(ctx context.Context, network, address string
 		}
 		return d.dialContext(ctx, network, address, retry-1)
 	}
-	return newConn(stm, d.localAddr, d.remoteAddr), nil
+	return NewConn(stm, d.localAddr, d.remoteAddr), nil
 }
